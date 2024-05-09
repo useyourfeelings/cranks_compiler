@@ -1,0 +1,29 @@
+cranks c compiler
+
+民科野生c编译器
+
+---
+
+c language
+only a simple subset of c
+
+standard library
+just few functions
+
+cpu
+Intel i9-13900K
+
+os
+Microsoft Windows 11
+
+assembler
+Microsoft ml64.exe
+
+optimization
+None
+
+security
+None
+
+correctness
+full of bugs
