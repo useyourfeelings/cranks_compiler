@@ -52,6 +52,7 @@ class Compiler:
 
     def add_function_stack_offset(self, offset):
         self.current_function.offset += offset
+        return self.current_function.offset
 
     def get_function_stack_offset(self):
         return self.current_function.offset
@@ -732,7 +733,7 @@ class Compiler:
             data = [idf]
             # self.dbg(f'get_direct_declarator return {idf}')
             # return idf
-        else:
+        elif False: # not support # else:
             if self.get_a_string('('):
                 decl = self.get_declarator()
                 if decl:
@@ -2782,6 +2783,9 @@ class Compiler:
             self.asm_head.write(f'; {name}.asm\n; {datetime.datetime.now()}\n\n')
             # self.asm_head.write(f'include cranks_libc.asm\n')
             self.asm_data.write(f'    .data\n\n')
+
+            helper_var = f'right_32f qword 0ffffffffh ; ffffffffh not work \n'
+            self.asm_data.write(helper_var)
 
             tu.gen_asm()
 
