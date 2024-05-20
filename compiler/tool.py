@@ -12,18 +12,33 @@ class Color:
 def print_red(text):
     print(f'{Color.red}{text}{Color.end}')
 
+
 def print_yellow(text):
     print(f'{Color.yellow}{text}{Color.end}')
+
 
 def print_green(text):
     print(f'{Color.green}{text}{Color.end}')
 
+
 def print_orange(text):
     print(f'{Color.orange}{text}{Color.end}')
+
 
 class CompilerError(Exception):
     def __init__(self, msg):
         self.msg = f"{Color.orange}CompilerError[{msg}]{Color.end}"
+
+    def __str__(self):
+        return self.msg
+        # print(repr(self.msg))
+        # return repr(self.msg)
+
+
+# user code error
+class CodeError(Exception):
+    def __init__(self, msg):
+        self.msg = f"{Color.orange}CodeError[{msg}]{Color.end}"
 
     def __str__(self):
         return self.msg

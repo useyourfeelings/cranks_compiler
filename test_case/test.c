@@ -23,7 +23,7 @@ int f1(){
     int v1;
     int v2 = 12345;
 
-    v1 = 1 + 999 * 5 / v2 * 2 - 3;
+    v1 = 1 + 999 * 5 / v2 * 2 - 1665555555;
 
     printf("f1 xc printf %d\n", v1);
 
@@ -31,7 +31,7 @@ int f1(){
 }
 
 int f2(){
-f1();
+    // f1();
     printf("f2 xc printf %d\n", 666);
     return 666;
 }
@@ -59,17 +59,58 @@ int f3(){
     printf("result = %d wtf2999阿斯顿999999999999999\n", f2());
 }
 
+
+int loop1(){
+
+    //int arr[2][222];
+
+    //int i;
+    //i++ ;
+int aa = 9;
+printf("xc printf %d wtf2\n", aa);
+    if(1){
+
+        printf("xc printf %d wtf2\n", aa);
+    }
+    int i = 50;
+    for(; i > 3; ){
+    i--;
+    i--;
+        printf("xc printf  wtf1 %d\n", ------i);
+        printf("xc printf  wtf2 %d\n", i++);
+        printf("xc printf  wtf3 %d\n", --i);
+    }
+    int g= 3;
+    while(g > 0){
+        printf("xc printf  g %d\n", --g);
+        g;
+    }
+
+    g= 0;
+    do{
+        printf("xc printf  g %d\n", --g);
+        g;
+    }while(g > 0);
+}
+
 int f4(){
 
-    int arr[10][222];
+    //int arrrrrrrrrrrrr[2][222];
+
+    //arrrrrrrrrrrrr[0][0] = 1;
 }
 
 
 int main(){
-    // f3()
-
+    //f2();
+    //int v2 = 3;
+    //int v1 = 1 + 999 * 5 / v2 * 2 - 1665555555;
+    //f4();
     f3();
-    f4();
+
+    //printf("f1 xc printf \n");
+
+    loop1();
 
     //printf("xc printf wtf %d %d %s %d %d %d", 1, 22, "wtfffffffffff", 44, 555, 666);
 

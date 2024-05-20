@@ -15,7 +15,7 @@ import datetime
 
 import compiler.component as comp
 import compiler.tool as tool
-from compiler.tool import CompilerError
+from compiler.tool import CompilerError, CodeError
 
 
 class Compiler:
@@ -205,7 +205,7 @@ class Compiler:
                 self.set_index(save_2)
 
                 if not self.now_all_white():
-                    raise CompilerError('get_external_declaration failed')
+                    raise CodeError('get_external_declaration failed')
 
                 break
 
@@ -453,13 +453,13 @@ class Compiler:
                 exp = self.get_expression()
                 if exp:
                     if self.get_a_string(')'):
-                        stmt_1 = self.get_statement()
-                        if stmt_1:
-                            self.dbg(f'get_selection_statement return {("while", exp, stmt_1)}')
-                            return comp.IterationStatement(self, ['while', exp, stmt_1])
+                        stmt = self.get_statement()
+                        if stmt:
+                            self.dbg(f'get_selection_statement return {("while", exp, stmt)}')
+                            return comp.IterationStatement(self, 0, exp_1 = exp, stmt = stmt)
         elif idf == 'do':
-            stmt_1 = self.get_statement()
-            if stmt_1:
+            stmt = self.get_statement()
+            if stmt:
                 idf = self.get_identifier()
                 if idf == 'while':
                     if self.get_a_string('('):
@@ -467,26 +467,33 @@ class Compiler:
                         if exp:
                             if self.get_a_string(')'):
                                 if self.get_a_string(';'):
-                                    self.dbg(f'get_selection_statement return {("do", stmt_1, "while", exp)}')
-                                    return comp.IterationStatement(self, ["do", stmt_1, "while", exp])
+                                    self.dbg(f'get_selection_statement return {("do", stmt, "while", exp)}')
+                                    return comp.IterationStatement(self, 1, exp_1 = exp, stmt = stmt)
         elif idf == 'for':
             if self.get_a_string('('):
                 save_2 = self.get_index()
+
+                exp_1 = comp.NoObject()
 
                 decl = self.get_declaration()
                 if not decl:
                     self.set_index(save_2)
 
-                exp_1 = self.get_expression()
+                    exp_1 = self.get_expression()
+                    if not self.get_a_string(';'):
+                        # fail
+                        self.set_index(save_1)
+                        self.dbg(f'get_iteration_statement return comp.NoObject()')
+                        return comp.NoObject()
+
+                exp_2 = self.get_expression()
                 if self.get_a_string(';'):
-                    exp_2 = self.get_expression()
-                    if self.get_a_string(';'):
-                        exp_3 = self.get_expression()
-                        if self.get_a_string(')'):
-                            stmt = self.get_statement()
-                            if stmt:
-                                self.dbg(f'get_selection_statement return {("for", (decl, exp_1), exp_2, exp_3, stmt)}')
-                                return comp.IterationStatement(self, ["for", (decl, exp_1), exp_2, exp_3, stmt])
+                    exp_3 = self.get_expression()
+                    if self.get_a_string(')'):
+                        stmt = self.get_statement()
+                        if stmt:
+                            self.dbg(f'get_selection_statement return {("for", exp_1, exp_2, exp_3, stmt)}')
+                            return comp.IterationStatement(self, 2, declaration = decl, exp_1 = exp_1, exp_2 = exp_2, exp_3 = exp_3, stmt = stmt)
 
         # fail
         self.set_index(save_1)
@@ -516,11 +523,11 @@ class Compiler:
                                 stmt_2 = self.get_statement()
                                 if stmt_2:
                                     self.dbg(f'get_selection_statement return {("if", exp, stmt_1, "else", stmt_2)}')
-                                    return comp.SelectionStatement(self, ["if", exp, stmt_1, "else", stmt_2])
+                                    return comp.SelectionStatement(self, exp = exp, stmt_1 = stmt_1, stmt_2 = stmt_2)
 
                             self.set_index(save_2)
                             self.dbg(f'get_selection_statement return {("if", exp, stmt_1)}')
-                            return comp.SelectionStatement(self, ['if', exp, stmt_1])
+                            return comp.SelectionStatement(self, exp = exp, stmt_1 = stmt_1)
         elif idf == 'switch':
             if self.get_a_string('('):
                 exp = self.get_expression()
@@ -529,7 +536,7 @@ class Compiler:
                         stmt_1 = self.get_statement()
                         if stmt_1:
                             self.dbg(f'get_selection_statement return {("switch", exp, stmt_1)}')
-                            return comp.SelectionStatement(self, ['switch', exp, stmt_1])
+                            return comp.SelectionStatement(self, switch = 'switch', exp = exp, stmt_1 = stmt_1)
 
         # fail
         self.set_index(save_1)
@@ -717,20 +724,22 @@ class Compiler:
     def get_direct_declarator(self, for_what = None):
         # identifier
         # ( declarator )
-        # direct-declarator [ constant-expression? ]
+        # direct-declarator [ constant-expression? ] # array decl
         # direct-declarator ( parameter-type-list ) # function
         # direct-declarator ( identifier-list? ) # function
 
         self.dbg(f'get_direct_declarator')
         save_1 = self.get_index()
 
-        dd_type = 'na'
+        name = ''
+        data_type = 'na' # var array function
         data = []
 
         idf = self.get_identifier()
         if idf:
-            dd_type = 'var'
-            data = [idf]
+            data_type = 'var'
+            #data = [idf]
+            name = idf.name
             # self.dbg(f'get_direct_declarator return {idf}')
             # return idf
         elif False: # not support # else:
@@ -741,9 +750,12 @@ class Compiler:
                         dd_type = 'var()'
                         data = [decl]
 
-        if data == []:
+        # if data == []:
+        if not idf:
             self.dbg(f'get_direct_declarator return comp.NoObject()')
             return comp.NoObject()
+
+        array_data = {'dim':0, 'ranks':[]}
 
         while True:
             save_2 = self.get_index()
@@ -751,8 +763,18 @@ class Compiler:
             if self.get_a_string('['):
                 ce = self.get_constant_expression()
                 if self.get_a_string(']'):
-                    data.append(ce)
-                    dd_type = 'array'
+                    # data.append(ce)
+
+                    if data_type == 'function':
+                        raise CodeError(f'function decl followed by []')
+
+                    self.dbg_fail(f'ce = {ce}')
+
+                    # raise  CompilerError(f'ce = {ce}')
+
+                    data_type = 'array'
+                    array_data['dim'] += 1
+                    array_data['ranks'].append(ce)
                     continue
 
             self.set_index(save_2)
@@ -761,8 +783,11 @@ class Compiler:
                 ptl = self.get_parameter_type_list()
                 if ptl:
                     if self.get_a_string(')'):
+                        if data_type == 'array':
+                            raise CodeError(f'array decl followed by ()')
+
                         data.append(ptl)
-                        dd_type = 'function'
+                        data_type = 'function'
                         continue
 
             self.set_index(save_2)
@@ -770,16 +795,21 @@ class Compiler:
             if self.get_a_string('('):
                 idfs = self.get_identifier_list()
                 if self.get_a_string(')'):
+                    if data_type == 'array':
+                        raise CodeError(f'array decl followed by ()')
+
                     data += idfs
-                    dd_type = 'function'
+                    data_type = 'function'
                     continue
 
             # all fail
             self.set_index(save_2)
             break
 
-        self.dbg(f'get_direct_declarator return {dd_type, data}')
-        return dd_type, data
+        return_data = {'type':data_type, 'name':name, 'array_data':array_data}
+        self.dbg(f'get_direct_declarator return {return_data}')
+        # return dd_type, data
+        return return_data
 
     @go_deep
     def get_identifier_list(self):
@@ -1055,7 +1085,7 @@ class Compiler:
             ts = self.get_type_specifier(for_what = for_what)
             if ts:
                 if type_spec is not None:
-                    raise CompilerError(f'more than one TypeSpecifier {type_spec}')
+                    raise CodeError(f'more than one TypeSpecifier {type_spec}')
 
                 type_spec = ts
                 # dss.append(ts)
@@ -1117,7 +1147,7 @@ class Compiler:
             ss = self.get_storage_class_specifier()
             if ss:
                 if storage_spec:
-                    raise CompilerError(f'more than one storage_spec')
+                    raise CodeError(f'more than one storage_spec')
 
                 storage_spec = ss
                 continue
@@ -1127,7 +1157,7 @@ class Compiler:
             ts = self.get_type_specifier()
             if ts:
                 if type_spec:
-                    raise CompilerError(f'more than one type_spec')
+                    raise CodeError(f'more than one type_spec')
 
                 type_spec = ts
                 continue
@@ -1137,7 +1167,7 @@ class Compiler:
             tq = self.get_type_qualifier()
             if tq:
                 if type_qua:
-                    raise CompilerError(f'more than one type_qua')
+                    raise CodeError(f'more than one type_qua')
 
                 type_qua = tq
                 continue
@@ -1147,7 +1177,7 @@ class Compiler:
             fs = self.get_function_specifier()
             if fs:
                 if function_spec:
-                    raise CompilerError(f'more than one function_spec')
+                    raise CodeError(f'more than one function_spec')
 
                 function_spec = fs
                 continue
@@ -1157,7 +1187,7 @@ class Compiler:
             aspec = self.get_alignment_specifier()
             if aspec:
                 if alignment_spec:
-                    raise CompilerError(f'more than one alignment_spec')
+                    raise CodeError(f'more than one alignment_spec')
 
                 alignment_spec = aspec
                 continue
@@ -1895,7 +1925,7 @@ class Compiler:
         if self.get_a_string('--'):
             ue = self.get_unary_expression()
             if ue:
-                new_ue = comp.UnaryExpression(self, mm = '--', ue = ue)
+                new_ue = comp.UnaryExpression(self, pp = '--', ue = ue)
                 self.dbg(f'get_unary_expression return {new_ue}')
                 return new_ue
 
@@ -2281,7 +2311,7 @@ class Compiler:
         ic = self.get_integer_constant()
         if ic:
             self.dbg(f'get_integer_constant {ic}')
-            return comp.Constant(self, ic)
+            return ic
 
         self.dbg(f'get_constant return comp.NoObject()')
         self.set_index(save_1)
@@ -2299,18 +2329,18 @@ class Compiler:
         dc = self.get_decimal_constant()
         if dc:
             self.dbg(f'get_integer_constant {dc}')
-            return dc
+            return comp.Constant(self, 'int', int(dc, 10))
 
         # 0x first
         hc = self.get_hexadecimal_constant()
         if hc:
             self.dbg(f'get_integer_constant {hc}')
-            return hc
+            return comp.Constant(self, 'int', int(hc, 16))
 
         oc = self.get_octal_constant()
         if oc:
             self.dbg(f'get_integer_constant {oc}')
-            return oc
+            return comp.Constant(self, 'int', int(oc, 8))
 
         self.set_index(save_1)
         self.dbg(f'get_integer_constant return comp.NoObject()')
@@ -2793,7 +2823,9 @@ class Compiler:
                 f.write(self.asm_head.getvalue() + self.asm_data.getvalue() + self.asm_code.getvalue())
 
             return True
-        except CompilerError as e:
+        #except CompilerError as e:
+        #    raise e
+        except CodeError as e:
             raise e
         except:
             traceback.print_exc()
@@ -2859,7 +2891,7 @@ class Compiler:
                     # close_comment = False
                     while True:
                         if index >= self.source_file_buffer_len:
-                            raise CompilerError("unterminated comment")
+                            raise CodeError("unterminated comment")
                             # done = True
                             # break
 
@@ -2867,7 +2899,7 @@ class Compiler:
                         if c == '*':
                             index += 1
                             if index >= self.source_file_buffer_len:
-                                raise CompilerError("unterminated comment")
+                                raise CodeError("unterminated comment")
 
                             cc = self.source_file_buffer[index]
                             if cc == '/': # */ close comment
@@ -2942,6 +2974,8 @@ class Compiler:
                     self.run(name + '.exe')
 
         except CompilerError as e:
+            self.dbg(e)
+        except CodeError as e:
             self.dbg(e)
 
     def build(self, name):

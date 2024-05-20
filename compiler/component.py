@@ -1,5 +1,5 @@
 import pprint
-from compiler.tool import CompilerError, print_red, print_yellow, print_green, print_orange
+from compiler.tool import CompilerError, CodeError, print_red, print_yellow, print_green, print_orange
 
 
 class CComponent:
@@ -61,6 +61,7 @@ class TranslationUnit(CComponent):
             ed.gen_asm(global_scope = True)
             # print(ed)
             for item in ed.get_name():
+                item['global'] = 1
                 self.compiler.scope[-1][item['name']] = item
         self.write_asm(f'end')
 
@@ -78,7 +79,7 @@ class FunctionDefinition(CComponent):
         # self.dl = dl
         self.cs = cs
 
-        self.name = self.declarator[1][1][0].name
+        self.name = self.declarator[1]['name']
 
         self.global_scope = global_scope
 
@@ -195,9 +196,10 @@ class Declaration(CComponent):
 
         for initd in self.idl:
             print(initd)
-            print(initd.dtr[1][0])
+            print(initd.dtr)
+            print(initd.dtr[1]['name'])
             # names.append((initd.dtr[1][0], initd.dtr[1][1][0].name))
-            names.append({'type':initd.dtr[1][0], 'name':initd.dtr[1][1][0].name})
+            names.append({'type':initd.dtr[1]['type'], 'name':initd.dtr[1]['name']})
             # print(ds.type_data)
             # names.append(ds.type_data)
         return names
@@ -205,7 +207,7 @@ class Declaration(CComponent):
     def gen_asm(self, global_scope = False):
         print(f'Declaration scope = {self.compiler.scope[-1]}')
 
-        # f.write(f'    ; {self.dss} {self.idl}\n')
+        # todo: make new name
         if global_scope:
             data_type = self.dss[0].type_data
             if self.idl:
@@ -214,33 +216,36 @@ class Declaration(CComponent):
                     #    pass
                     # print(initd)
                     if not initd.dtr[0]:
-                        if initd.dtr[1][0] == 'var':
+                        name = initd.dtr[1]['name']
+
+                        if initd.dtr[1]['type'] == 'var':
                             if data_type == 'int':
-                                self.write_asm_data(f'{initd.dtr[1][1][0].name} dword 0\n')
+                                self.write_asm_data(f'{name} dword 0\n')
                                 continue
-                        elif initd.dtr[1][0] == 'function':
-                            self.write_asm_data(f'extern {initd.dtr[1][1][0].name}:proc\n')
+                        elif initd.dtr[1]['type'] == 'array':
+                            if data_type == 'int':
+                                self.write_asm_data(f'{name} dword 0\n')
+                                continue
+                        elif initd.dtr[1]['type'] == 'function':
+                            self.write_asm_data(f'extern {name}:proc\n')
                             continue
 
                     self.write_asm_data(f'    ; Declaration\n')
         else:
-            # self.write_asm(f'    ; Declaration\n')
             if self.dss[0].type_data == 'int':
-                # self.write_asm(f'    ; Declaration {self.dss[0].type_data}\n')
-
                 for item in self.idl:
                     if item.dtr[0]:  # pointer
                         pass
                     else:
-                        name = item.dtr[1][1][0].name
+                        name = item.dtr[1]['name']
 
-                        if item.dtr[1][0] == 'var':  # declaration
+                        if item.dtr[1]['type'] == 'var':  # declaration
                             # print(item.dtr[1][1])
                             # self.write_asm(f'    ; Declaration var {self.dss[0].type_data} {item.dtr[1][1][0].name}\n')
                             self.compiler.add_function_stack_offset(8)
                             self.write_asm(f'    sub rsp, 8 ; Declaration var {self.dss[0].type_data} {name} offset = {self.compiler.get_function_stack_offset()}\n')
 
-                            scope_item = {'type':self.dss[0].type_data, 'name':name, 'offset':self.compiler.get_function_stack_offset()}
+                            scope_item = {'type':'var', 'data_type':self.dss[0].type_data, 'name':name, 'offset':self.compiler.get_function_stack_offset()}
                             # self.compiler.scope[-1].append({'type':self.dss[0].type_data, 'name':item.dtr[1][1][0].name, 'offset':self.compiler.get_function_stack_offset()})
                             self.compiler.scope[-1][scope_item['name']] = scope_item
 
@@ -248,14 +253,11 @@ class Declaration(CComponent):
                             if isinstance(item.init, AssignmentExpression):
                                 item.init.gen_asm(scope_item['offset'])
 
-                        elif item.dtr[1][0] == 'array':
-                            # print(item.dtr[1][1])
+                        elif item.dtr[1]['type'] == 'array':
                             self.write_asm(f'    ; Declaration array {self.dss[0].type_data} {name}\n')
 
-                            print_red(f'dtr size {len(item.dtr[1][1])}')
-                            for ditem in item.dtr[1][1]:
-                                print_red(f'{ditem}')
             else:
+                raise CompilerError('no support 1')
                 self.write_asm(f'    ; Declaration {self.dss[0].type_data}\n')
 
 
@@ -334,19 +336,21 @@ class CompoundStatement(CComponent):
             else:
                 print(f'{" " * (indent + 4)}{bi}')
 
-    def gen_asm(self, result_offset = None):
+    def gen_asm(self):
         for bi in self.bil:
             #print_red(f'bi = {bi}')
 
-            # if hasattr(bi, 'gen_asm'):
-            #     bi.gen_asm(result_offset)
-            # else:
-            #     bi.gen_asm(result_offset)
-
+            # Declaration or statement
             if isinstance(bi, Declaration):
                 bi.gen_asm()
             else:
-                bi.gen_asm(result_offset)
+                # self.write_asm(f'    sub rsp, 8 ; alloc space for statement result\n')
+                # result_offset = self.compiler.add_function_stack_offset(8)
+
+                bi.gen_asm()
+
+                # self.write_asm(f'    add rsp, 8 ; free space for statement result\n')
+                # self.compiler.add_function_stack_offset(-8)
 
 
 class Statement(CComponent):
@@ -422,16 +426,19 @@ class Expression(CComponent):
             else:
                 print(f'{" " * (indent + 4)}{item}')
 
-    def gen_asm(self, my_result_offset):
+    def gen_asm(self, my_result_offset = None, set_result = True):
         print(f'Expression gen_asm scope = {self.compiler.scope}')
+
+        result = None
 
         for item in self.data:
             # self.write_asm(f'    ; Expression\n')
             # print_yellow(item)
             self.write_asm(f'\n    ; Expression start offset = {self.compiler.get_function_stack_offset()} my_result_offset = {my_result_offset}\n')
-            item.gen_asm(my_result_offset)
+            result = item.gen_asm(my_result_offset, set_result)
             self.write_asm(f'    ; Expression over offset = {self.compiler.get_function_stack_offset()}\n\n')
 
+        return result
 
 class AssignmentExpression(CComponent):
     # conditional-expression
@@ -455,19 +462,21 @@ class AssignmentExpression(CComponent):
             print(f'{" " * (indent + 4)}{self.opt}')
             self.ae.print_me(indent + 4)
 
-    def gen_asm(self, my_result_offset):
+    def gen_asm(self, my_result_offset, set_result = True):
         print(f'AssignmentExpression gen_asm {my_result_offset = } scope = {self.compiler.scope}')
         if self.ce:
-            self.ce.gen_asm(my_result_offset)
+            return self.ce.gen_asm(my_result_offset, set_result)
         else:
             # self.write_asm(f'    sub rsp 8; space for unary-expression\n')
             # self.compiler.add_function_stack_offset(8)
-            data = self.ue.gen_asm()
+            data = self.ue.gen_asm(my_result_offset, set_result = False)
             if data['type'] == 'var':
                 # '=', '*=', '/=', '%=', '+=', '-=', '<<=', '>>=', '&=', '^=', '|='
                 # v1 = xxx
                 if self.opt == '=':
                     self.ae.gen_asm(data['offset'])
+
+            return {'type':'mem', 'offset':data['offset']}
 
 
 class ConditionalExpression(CComponent):
@@ -487,10 +496,10 @@ class ConditionalExpression(CComponent):
         print(f'{" " * indent}ConditionalExpression')
         print(f'{" " * (indent + 4)}{self.loe, self.exp, self.ce}')
 
-    def gen_asm(self, my_result_offset):
+    def gen_asm(self, my_result_offset, set_result = True):
         print(f'ConditionalExpression gen_asm {my_result_offset = } scope = {self.compiler.scope}')
         if not self.exp:
-            self.loe.gen_asm(my_result_offset)
+            return self.loe.gen_asm(my_result_offset, set_result)
         else:
             self.loe.gen_asm(my_result_offset)
             self.write_asm(f'    ; ConditionalExpression test le result\n')
@@ -513,14 +522,104 @@ gen_asm(self, my_result_offset):
 '''
 
 
-class LogicalOrExpression(CComponent):
-    # logical-and-expression
-    # logical-or-expression || logical-and-expression
-
+class ChainExpression(CComponent):
     def __init__(self, compiler, data):
         super().__init__(compiler)
         self.data = data
         self.data_count = len(data)
+
+        self.gen_asm_results = []
+
+    def get_const_result(self):
+        return None
+
+    def sub_items_gen_asm(self, result_offset, my_result_offset, set_result = True):
+        pass
+
+    def gen_asm(self, my_result_offset, set_result = True):
+        print(f'ChainExpression gen_asm {my_result_offset = } scope = {self.compiler.scope}')
+
+        if self.data_count == 1:
+            if isinstance(self.data[0], tuple):
+                return self.data[0][1].gen_asm(my_result_offset, set_result)
+            else:
+                return self.data[0].gen_asm(my_result_offset, set_result)
+
+        # save r12
+        self.write_asm(f'    push r12 ; save r12\n')
+        self.compiler.add_function_stack_offset(8)
+
+        # space for exp results
+        self.write_asm(f'    sub rsp, {8 * self.data_count} ; ChainExpression for exp result\n')
+        offset = self.compiler.get_function_stack_offset() + 8
+        self.compiler.add_function_stack_offset(8 * self.data_count)
+
+        result_offset = offset
+
+        # check const
+        # if some items are const, we can make some results at compile time?
+        all_const = True
+
+        # gen_asm for each
+        for item in self.data:
+            # print_red(f'item = {item}')
+            if isinstance(item, tuple):
+                result = item[1].gen_asm(offset)
+            else:
+                result = item.gen_asm(offset)
+
+            if result['type'] in ['string']:
+                # ok if just one item
+                if self.data_count > 1:
+                    raise CodeError(f'wtf on string [{result["name"]}]')
+
+            if result['type'] != 'const':
+                all_const = False
+
+            self.gen_asm_results.append(result)
+            offset += 8
+
+        print_red(f'gen_asm_results = {self.gen_asm_results}')
+
+        if all_const:
+
+            result = self.get_const_result()
+
+            if set_result:
+                self.write_asm(f'    mov qword ptr [rbp - {my_result_offset}], {result} ; ChainExpression set result\n')
+
+            # free
+            self.write_asm(f'    add rsp, {8 * self.data_count} ; ChainExpression\n')
+            self.compiler.add_function_stack_offset(-8 * self.data_count)
+            self.write_asm(f'    pop r12 ; ChainExpression recover r12\n')
+            self.compiler.add_function_stack_offset(-8)
+
+            return {'type':'const', 'value':result}
+
+        # first to r12
+        self.write_asm(f'    mov r12, [rbp - {result_offset}] ; MultiplicativeExpression get first result\n')
+
+        self.sub_items_gen_asm(result_offset, my_result_offset, set_result)
+
+        # pop
+        self.write_asm(f'    add rsp, {8 * self.data_count} ; MultiplicativeExpression\n')
+        self.compiler.add_function_stack_offset(-8 * self.data_count)
+        self.write_asm(f'    pop r12 ; MultiplicativeExpression recover r12\n')
+        self.compiler.add_function_stack_offset(-8)
+
+        if self.data_count == 1:
+            # print_red(gen_asm_results[0])
+            return self.gen_asm_results[0]
+
+        return {'type':'mem', 'offset':my_result_offset}
+
+
+class LogicalOrExpression(ChainExpression):
+    # logical-and-expression
+    # logical-or-expression || logical-and-expression
+
+    def __init__(self, compiler, data):
+        super().__init__(compiler, data)
 
     def __repr__(self):
         return f'LogicalOrExpression {self.data}'
@@ -529,26 +628,17 @@ class LogicalOrExpression(CComponent):
         print(f'{" " * indent}LogicalOrExpression')
         print(f'{" " * (indent + 4)}{self.data}')
 
-    def gen_asm(self, my_result_offset):
-        print(f'LogicalOrExpression gen_asm {my_result_offset = } scope = {self.compiler.scope}')
+    def get_const_result(self):
+        # todo? not consistent with c
+        for index in range(self.data_count):
+            if 1 == self.gen_asm_results[index]['value']:
+                return 1
 
-        if self.data_count == 1:
-            return self.data[0].gen_asm(my_result_offset)
+        return 0
 
-        # space for exp results
-        self.write_asm(f'    sub rsp, {8 * self.data_count} ; LogicalOrExpression for exp result\n')
-        offset = self.compiler.get_function_stack_offset() + 8
-        self.compiler.add_function_stack_offset(8 * self.data_count)
-
-        result_offset = offset
-
-        # gen_asm for each
-        for item in self.data:
-            item.gen_asm(offset)
-            offset += 8
-
+    def sub_items_gen_asm(self, result_offset, my_result_offset, set_result = True):
         # todo use loop in asm
-        '''
+        """
             cmp v1 0
             jne cmp_or_ok
 
@@ -566,7 +656,7 @@ class LogicalOrExpression(CComponent):
             cmp_or_ok:
                 mov r12, 1
             cmp_done:
-        '''
+        """
 
         label_1_name = f'cmp_or_ok_{self.compiler.item_id}'
         self.compiler.item_id += 1
@@ -578,22 +668,17 @@ class LogicalOrExpression(CComponent):
             result_offset += 8
 
         # set result
-        self.write_asm(f'    mov qword ptr [rbp - {my_result_offset}], 0\n    jmp {label_2_name}\n    {label_1_name}:\n')
-        self.write_asm(f'        mov qword ptr [rbp - {my_result_offset}], 1\n    {label_2_name}:\n')
-
-        # pop
-        self.write_asm(f'    add rsp, {8 * self.data_count} ; LogicalOrExpression\n')
-        self.compiler.add_function_stack_offset(-8 * self.data_count)
+        if set_result:
+            self.write_asm(f'    mov qword ptr [rbp - {my_result_offset}], 0\n    jmp {label_2_name}\n    {label_1_name}:\n')
+            self.write_asm(f'        mov qword ptr [rbp - {my_result_offset}], 1\n    {label_2_name}:\n')
 
 
-class LogicalAndExpression(CComponent):
+class LogicalAndExpression(ChainExpression):
     # inclusive-or-expression
     # logical-and-expression && inclusive-or-expression
 
     def __init__(self, compiler, data):
-        super().__init__(compiler)
-        self.data = data
-        self.data_count = len(data)
+        super().__init__(compiler, data)
 
     def __repr__(self):
         return f'LogicalAndExpression {self.data}'
@@ -602,44 +687,35 @@ class LogicalAndExpression(CComponent):
         print(f'{" " * indent}LogicalAndExpression')
         print(f'{" " * (indent + 4)}{self.data}')
 
-    def gen_asm(self, my_result_offset):
-        print(f'LogicalAndExpression gen_asm {my_result_offset = } scope = {self.compiler.scope}')
+    def get_const_result(self):
+        # todo? not consistent with c
+        for index in range(self.data_count):
+            if 0 == self.gen_asm_results[index]['value']:
+                return 0
 
-        if self.data_count == 1:
-            return self.data[0].gen_asm(my_result_offset)
+        return 1
 
-        # space for exp results
-        self.write_asm(f'    sub rsp, {8 * self.data_count} ; LogicalAndExpression for exp result\n')
-        offset = self.compiler.get_function_stack_offset() + 8
-        self.compiler.add_function_stack_offset(8 * self.data_count)
-
-        result_offset = offset
-
-        # gen_asm for each
-        for item in self.data:
-            item.gen_asm(offset)
-            offset += 8
-
+    def sub_items_gen_asm(self, result_offset, my_result_offset, set_result = True):
         # todo use loop in asm
-        '''
+        """
             cmp v1 0
             je cmp_and_fail
-            
+
             cmp v2 0
             je cmp_and_fail
-            
+
             ...
-            
+
             cmp vx 0
             je cmp_and_fail
-            
+
             mov r12, 1
             jmp cmp_done
-            
+
             cmp_and_fail:
                 mov r12, 0
             cmp_done:
-        '''
+        """
 
         label_1_name = f'cmp_and_fail_{self.compiler.item_id}'
         self.compiler.item_id += 1
@@ -651,22 +727,17 @@ class LogicalAndExpression(CComponent):
             result_offset += 8
 
         # set result
-        self.write_asm(f'    mov qword ptr [rbp - {my_result_offset}], 1\n    jmp {label_2_name}\n    {label_1_name}:\n')
-        self.write_asm(f'        mov qword ptr [rbp - {my_result_offset}], 0\n    {label_2_name}:\n')
-
-        # pop
-        self.write_asm(f'    add rsp, {8 * self.data_count} ; LogicalAndExpression\n')
-        self.compiler.add_function_stack_offset(-8 * self.data_count)
+        if set_result:
+            self.write_asm(f'    mov qword ptr [rbp - {my_result_offset}], 1\n    jmp {label_2_name}\n    {label_1_name}:\n')
+            self.write_asm(f'        mov qword ptr [rbp - {my_result_offset}], 0\n    {label_2_name}:\n')
 
 
-class InclusiveOrExpression(CComponent):
+class InclusiveOrExpression(ChainExpression):
     # exclusive-or-expression
     # inclusive-or-expression | exclusive-or-expression
 
     def __init__(self, compiler, data):
-        super().__init__(compiler)
-        self.data = data
-        self.data_count = len(data)
+        super().__init__(compiler, data)
 
     def __repr__(self):
         return f'InclusiveOrExpression {self.data}'
@@ -675,28 +746,15 @@ class InclusiveOrExpression(CComponent):
         print(f'{" " * indent}InclusiveOrExpression')
         print(f'{" " * (indent + 4)}{self.data}')
 
-    def gen_asm(self, my_result_offset):
-        print(f'InclusiveOrExpression gen_asm {my_result_offset = } {self.data_count = } {self.compiler.get_function_stack_offset()} scope = {self.compiler.scope}')
+    def get_const_result(self):
+        # todo? not consistent with c
+        result = self.gen_asm_results[0]['value']
+        for index in range(1, self.data_count):
+            result |= self.gen_asm_results[index]['value']
 
-        # save r12
-        self.write_asm(f'    push r12 ; save r12\n')
-        self.compiler.add_function_stack_offset(8)
+        return result
 
-        # space for exp results
-        self.write_asm(f'    sub rsp, {8 * self.data_count} ; InclusiveOrExpression for exp result\n')
-        offset = self.compiler.get_function_stack_offset() + 8
-        self.compiler.add_function_stack_offset(8 * self.data_count)
-
-        result_offset = offset
-
-        # gen_asm for each
-        for item in self.data:
-            item.gen_asm(offset)
-            offset += 8
-
-        # first to r12
-        self.write_asm(f'    mov r12, [rbp - {result_offset}] ; InclusiveOrExpression get first result\n')
-
+    def sub_items_gen_asm(self, result_offset, my_result_offset, set_result = True):
         for index in range(1, self.data_count):
             result_offset += 8
 
@@ -706,23 +764,16 @@ class InclusiveOrExpression(CComponent):
             self.write_asm(f'    or r12, [rbp - {result_offset}]\n')
 
         # set result
-        if my_result_offset:
+        if set_result:
             self.write_asm(f'    mov [rbp - {my_result_offset}], r12 ; InclusiveOrExpression set result\n')
 
-        # pop
-        self.write_asm(f'    add rsp, {8 * self.data_count} ; InclusiveOrExpression\n')
-        self.compiler.add_function_stack_offset(-8 * self.data_count)
-        self.write_asm(f'    pop r12 ; InclusiveOrExpression recover r12\n')
-        self.compiler.add_function_stack_offset(-8)
 
-class ExclusiveOrExpression(CComponent):
+class ExclusiveOrExpression(ChainExpression):
     # and-expression
     # exclusive-or-expression ^ and-expression
 
     def __init__(self, compiler, data):
-        super().__init__(compiler)
-        self.data = data
-        self.data_count = len(data)
+        super().__init__(compiler, data)
 
     def __repr__(self):
         return f'ExclusiveOrExpression {self.data}'
@@ -731,28 +782,15 @@ class ExclusiveOrExpression(CComponent):
         print(f'{" " * indent}ExclusiveOrExpression')
         print(f'{" " * (indent + 4)}{self.data}')
 
-    def gen_asm(self, my_result_offset):
-        print(f'ExclusiveOrExpression gen_asm {my_result_offset = } scope = {self.compiler.scope}')
+    def get_const_result(self):
+        # todo? not consistent with c
+        result = self.gen_asm_results[0]['value']
+        for index in range(1, self.data_count):
+            result ^= self.gen_asm_results[index]['value']
 
-        # save r12
-        self.write_asm(f'    push r12 ; save r12\n')
-        self.compiler.add_function_stack_offset(8)
+        return result
 
-        # space for exp results
-        self.write_asm(f'    sub rsp, {8 * self.data_count} ; ExclusiveOrExpression for exp result\n')
-        offset = self.compiler.get_function_stack_offset() + 8
-        self.compiler.add_function_stack_offset(8 * self.data_count)
-
-        result_offset = offset
-
-        # gen_asm for each
-        for item in self.data:
-            item.gen_asm(offset)
-            offset += 8
-
-        # first to r12
-        self.write_asm(f'    mov r12, [rbp - {result_offset}] ; ExclusiveOrExpression get first result. offset = {self.compiler.get_function_stack_offset()}\n')
-
+    def sub_items_gen_asm(self, result_offset, my_result_offset, set_result = True):
         for index in range(1, self.data_count):
             result_offset += 8
             '''
@@ -761,24 +799,16 @@ class ExclusiveOrExpression(CComponent):
             self.write_asm(f'    xor r12, [rbp - {result_offset}]\n')
 
         # set result
-        if my_result_offset:
+        if set_result:
             self.write_asm(f'    mov [rbp - {my_result_offset}], r12 ; ExclusiveOrExpression set result\n')
 
-        # pop
-        self.write_asm(f'    add rsp, {8 * self.data_count} ; ExclusiveOrExpression\n')
-        self.compiler.add_function_stack_offset(-8 * self.data_count)
-        self.write_asm(f'    pop r12 ; ExclusiveOrExpression recover r12\n')
-        self.compiler.add_function_stack_offset(-8)
 
-
-class AndExpression(CComponent):
+class AndExpression(ChainExpression):
     # equality-expression
     # and-expression & equality-expression
 
     def __init__(self, compiler, data):
-        super().__init__(compiler)
-        self.data = data
-        self.data_count = len(data)
+        super().__init__(compiler, data)
 
     def __repr__(self):
         return f'AndExpression {self.data}'
@@ -787,28 +817,15 @@ class AndExpression(CComponent):
         print(f'{" " * indent}AndExpression')
         print(f'{" " * (indent + 4)}{self.data}')
 
-    def gen_asm(self, my_result_offset):
-        print(f'AndExpression gen_asm {my_result_offset = } scope = {self.compiler.scope}')
+    def get_const_result(self):
+        # todo? not consistent with c
+        result = self.gen_asm_results[0]['value']
+        for index in range(1, self.data_count):
+            result &= self.gen_asm_results[index]['value']
 
-        # save r12
-        self.write_asm(f'    push r12 ; save r12\n')
-        self.compiler.add_function_stack_offset(8)
+        return result
 
-        # space for exp results
-        self.write_asm(f'    sub rsp, {8 * self.data_count} ; AndExpression for exp result\n')
-        offset = self.compiler.get_function_stack_offset() + 8
-        self.compiler.add_function_stack_offset(8 * self.data_count)
-
-        result_offset = offset
-
-        # gen_asm for each
-        for item in self.data:
-            item.gen_asm(offset)
-            offset += 8
-
-        # first to r12
-        self.write_asm(f'    mov r12, [rbp - {result_offset}] ; AndExpression get first result\n')
-
+    def sub_items_gen_asm(self, result_offset, my_result_offset, set_result = True):
         for index in range(1, self.data_count):
             result_offset += 8
 
@@ -818,25 +835,17 @@ class AndExpression(CComponent):
             self.write_asm(f'    and r12, [rbp - {result_offset}]\n')
 
         # set result
-        if my_result_offset:
+        if set_result:
             self.write_asm(f'    mov [rbp - {my_result_offset}], r12 ; set result\n')
 
-        # pop
-        self.write_asm(f'    add rsp, {8 * self.data_count} ; AndExpression\n')
-        self.compiler.add_function_stack_offset(-8 * self.data_count)
-        self.write_asm(f'    pop r12 ; AndExpression recover r12\n')
-        self.compiler.add_function_stack_offset(-8)
 
-
-class EqualityExpression(CComponent):
+class EqualityExpression(ChainExpression):
     # relational-expression
     # equality-expression == relational-expression
     # equality-expression != relational-expression
 
     def __init__(self, compiler, data):
-        super().__init__(compiler)
-        self.data = data
-        self.data_count = len(data)
+        super().__init__(compiler, data)
 
     def __repr__(self):
         return f'EqualityExpression {self.data}'
@@ -845,31 +854,24 @@ class EqualityExpression(CComponent):
         print(f'{" " * indent}EqualityExpression')
         print(f'{" " * (indent + 4)}{self.data}')
 
-    def gen_asm(self, my_result_offset):
-        print(f'EqualityExpression gen_asm {my_result_offset = } scope = {self.compiler.scope}')
+    def get_const_result(self):
+        # todo? not consistent with c
+        result = self.gen_asm_results[0]['value']
+        for index in range(1, self.data_count):
+            if self.data[index][0] == '==':
+                if result < self.gen_asm_results[index]['value']:
+                    result = 1
+                else:
+                    result = 0
+            elif self.data[index][0] == '!=':
+                if result > self.gen_asm_results[index]['value']:
+                    result = 1
+                else:
+                    result = 0
 
-        # save r12
-        self.write_asm(f'    push r12 ; save r12\n')
-        self.compiler.add_function_stack_offset(8)
+        return result
 
-        # space for exp results
-        self.write_asm(f'    sub rsp, {8 * self.data_count} ; EqualityExpression for exp result\n')
-        offset = self.compiler.get_function_stack_offset() + 8
-        self.compiler.add_function_stack_offset(8 * self.data_count)
-
-        result_offset = offset
-
-        # gen_asm for each
-        for item in self.data:
-            # print_yellow(item)
-            # pprint.pprint(item, indent = 4, width = 1)
-            item[1].gen_asm(offset)
-            offset += 8
-            # print_yellow(f'asm_result = {asm_result}')
-
-        # first to r12
-        self.write_asm(f'    mov r12, [rbp - {result_offset}] ; EqualityExpression get first result\n')
-
+    def sub_items_gen_asm(self, result_offset, my_result_offset, set_result = True):
         for index in range(1, self.data_count):
             result_offset += 8
 
@@ -890,23 +892,17 @@ class EqualityExpression(CComponent):
                 '''
 
                 self.write_asm(f'    cmp r12, [rbp - {result_offset}]\n    je {label_1_name}\n    mov r12, 0\n    jmp {label_2_name}\n    {label_1_name}:\n        mov r12, 1\n    {label_2_name}:\n')
-            elif self.data[index][0] == '！=':
+            elif self.data[index][0] == '!=':
                 self.write_asm(f'    cmp r12, [rbp - {result_offset}]\n    jne {label_1_name}\n    mov r12, 0\n    jmp {label_2_name}\n    {label_1_name}:\n        mov r12, 1\n    {label_2_name}:\n')
             else:
                 raise CompilerError(f'wtf')
 
         # set result
-        if my_result_offset:
+        if set_result:
             self.write_asm(f'    mov [rbp - {my_result_offset}], r12 ; EqualityExpression set result\n')
 
-        # pop
-        self.write_asm(f'    add rsp, {8 * self.data_count} ; EqualityExpression\n')
-        self.compiler.add_function_stack_offset(-8 * self.data_count)
-        self.write_asm(f'    pop r12 ; EqualityExpression recover r12\n')
-        self.compiler.add_function_stack_offset(-8)
 
-
-class RelationalExpression(CComponent):
+class RelationalExpression(ChainExpression):
     # shift-expression
     # relational-expression < shift-expression
     # relational-expression > shift-expression
@@ -914,9 +910,7 @@ class RelationalExpression(CComponent):
     # relational-expression >= shift-expression
 
     def __init__(self, compiler, data):
-        super().__init__(compiler)
-        self.data = data
-        self.data_count = len(data)
+        super().__init__(compiler, data)
 
     def __repr__(self):
         return f'RelationalExpression {self.data}'
@@ -925,30 +919,34 @@ class RelationalExpression(CComponent):
         print(f'{" " * indent}RelationalExpression')
         print(f'{" " * (indent + 4)}{self.data}')
 
-    def gen_asm(self, my_result_offset):
-        print(f'RelationalExpression gen_asm {my_result_offset = } scope = {self.compiler.scope}')
+    def get_const_result(self):
+        # todo? not consistent with c
+        result = self.gen_asm_results[0]['value']
+        for index in range(1, self.data_count):
+            if self.data[index][0] == '<':
+                if result < self.gen_asm_results[index]['value']:
+                    result = 1
+                else:
+                    result = 0
+            elif self.data[index][0] == '>':
+                if result > self.gen_asm_results[index]['value']:
+                    result = 1
+                else:
+                    result = 0
+            elif self.data[index][0] == '<=':
+                if result <= self.gen_asm_results[index]['value']:
+                    result = 1
+                else:
+                    result = 0
+            elif self.data[index][0] == '>=':
+                if result >= self.gen_asm_results[index]['value']:
+                    result = 1
+                else:
+                    result = 0
 
-        # save r12
-        self.write_asm(f'    push r12 ; save r12\n')
-        self.compiler.add_function_stack_offset(8)
+        return result
 
-        # space for exp results
-        self.write_asm(f'    sub rsp, {8 * self.data_count} ; RelationalExpression for exp result. offset = {self.compiler.get_function_stack_offset()}\n')
-        offset = self.compiler.get_function_stack_offset() + 8
-        self.compiler.add_function_stack_offset(8 * self.data_count)
-
-        result_offset = offset
-
-        # gen_asm for each
-        for item in self.data:
-            # print_yellow(item)
-            # pprint.pprint(item, indent = 4, width = 1)
-            item[1].gen_asm(offset)
-            offset += 8
-
-        # first to r12
-        self.write_asm(f'    mov r12, [rbp - {result_offset}] ; RelationalExpression get first result. offset = {self.compiler.get_function_stack_offset()}\n')
-
+    def sub_items_gen_asm(self, result_offset, my_result_offset, set_result = True):
         for index in range(1, self.data_count):
             result_offset += 8
 
@@ -979,25 +977,17 @@ class RelationalExpression(CComponent):
                 raise CompilerError(f'wtf')
 
         # set result
-        if my_result_offset:
+        if set_result:
             self.write_asm(f'    mov [rbp - {my_result_offset}], r12 ; RelationalExpression set result\n')
 
-        # pop
-        self.write_asm(f'    add rsp, {8 * self.data_count} ; RelationalExpression\n')
-        self.compiler.add_function_stack_offset(-8 * self.data_count)
-        self.write_asm(f'    pop r12 ; RelationalExpression recover r12\n')
-        self.compiler.add_function_stack_offset(-8)
 
-
-class ShiftExpression(CComponent):
+class ShiftExpression(ChainExpression):
     # additive-expression
     # shift-expression << additive-expression
     # shift-expression >> additive-expression
 
     def __init__(self, compiler, data):
-        super().__init__(compiler)
-        self.data = data
-        self.data_count = len(data)
+        super().__init__(compiler, data)
 
     def __repr__(self):
         return f'ShiftExpression {self.data}'
@@ -1006,31 +996,18 @@ class ShiftExpression(CComponent):
         print(f'{" " * indent}ShiftExpression')
         print(f'{" " * (indent + 4)}{self.data}')
 
-    def gen_asm(self, my_result_offset):
-        print(f'ShiftExpression gen_asm {my_result_offset = } scope = {self.compiler.scope}')
+    def get_const_result(self):
+        # todo? not consistent with c
+        result = self.gen_asm_results[0]['value']
+        for index in range(1, self.data_count):
+            if self.data[index][0] == '<<':
+                result <<= self.gen_asm_results[index]['value']
+            elif self.data[index][0] == '>>':
+                result >>= self.gen_asm_results[index]['value']
 
-        # save r12
-        self.write_asm(f'    push r12 ; save r12\n')
-        self.compiler.add_function_stack_offset(8)
+        return result
 
-        # space for exp results
-        self.write_asm(f'    sub rsp, {8 * self.data_count} ; ShiftExpression for exp result\n')
-        offset = self.compiler.get_function_stack_offset() + 8
-        self.compiler.add_function_stack_offset(8 * self.data_count)
-
-        result_offset = offset
-
-        # gen_asm for each
-        for item in self.data:
-            # print_yellow(item)
-            # pprint.pprint(item, indent = 4, width = 1)
-            item[1].gen_asm(offset)
-            offset += 8
-            # print_yellow(f'asm_result = {asm_result}')
-
-        # first to r12
-        self.write_asm(f'    mov r12, [rbp - {result_offset}] ; ShiftExpression get first result\n')
-
+    def sub_items_gen_asm(self, result_offset, my_result_offset, set_result = True):
         for index in range(1, self.data_count):
             result_offset += 8
 
@@ -1047,25 +1024,17 @@ class ShiftExpression(CComponent):
             self.write_asm(f'    pop rcx\n')
 
         # set result
-        if my_result_offset:
+        if set_result:
             self.write_asm(f'    mov [rbp - {my_result_offset}], r12 ; ShiftExpression set result\n')
 
-        # pop
-        self.write_asm(f'    add rsp, {8 * self.data_count} ; ShiftExpression\n')
-        self.compiler.add_function_stack_offset(-8 * self.data_count)
-        self.write_asm(f'    pop r12 ; ShiftExpression recover r12\n')
-        self.compiler.add_function_stack_offset(-8)
 
-
-class AdditiveExpression(CComponent):
+class AdditiveExpression(ChainExpression):
     # multiplicative-expression
     # additive-expression + multiplicative-expression
     # additive-expression - multiplicative-expression
 
     def __init__(self, compiler, data):
-        super().__init__(compiler)
-        self.data = data
-        self.data_count = len(data)
+        super().__init__(compiler, data)
 
     def __repr__(self):
         return f'AdditiveExpression {self.data}'
@@ -1074,30 +1043,18 @@ class AdditiveExpression(CComponent):
         print(f'{" " * indent}AdditiveExpression')
         print(f'{" " * (indent + 4)}{self.data}')
 
-    def gen_asm(self, my_result_offset):
-        print(f'AdditiveExpression gen_asm {my_result_offset = } scope = {self.compiler.scope}')
+    def get_const_result(self):
+        # todo? not consistent with c
+        result = self.gen_asm_results[0]['value']
+        for index in range(1, self.data_count):
+            if self.data[index][0] == '+':
+                result += self.gen_asm_results[index]['value']
+            elif self.data[index][0] == '-':
+                result -= self.gen_asm_results[index]['value']
 
-        # save r12
-        self.write_asm(f'    push r12 ; save r12\n')
-        self.compiler.add_function_stack_offset(8)
+        return result
 
-        # space for exp results
-        self.write_asm(f'    sub rsp, {8 * self.data_count} ; AdditiveExpression for exp result\n')
-        offset = self.compiler.get_function_stack_offset() + 8
-        self.compiler.add_function_stack_offset(8 * self.data_count)
-
-        result_offset = offset
-
-        # gen_asm for each
-        for item in self.data:
-            # print_yellow(item)
-            # pprint.pprint(item, indent = 4, width = 1)
-            item[1].gen_asm(offset)
-            offset += 8
-
-        # first to r12
-        self.write_asm(f'    mov r12, [rbp - {result_offset}] ; AdditiveExpression get first result\n')
-
+    def sub_items_gen_asm(self, result_offset, my_result_offset, set_result = True):
         for index in range(1, self.data_count):
             result_offset += 8
 
@@ -1109,26 +1066,18 @@ class AdditiveExpression(CComponent):
                 raise CompilerError(f'wtf')
 
         # set result
-        if my_result_offset:
+        if set_result:
             self.write_asm(f'    mov [rbp - {my_result_offset}], r12 ; AdditiveExpression set result\n')
 
-        # pop
-        self.write_asm(f'    add rsp, {8 * self.data_count} ; AdditiveExpression\n')
-        self.compiler.add_function_stack_offset(-8 * self.data_count)
-        self.write_asm(f'    pop r12 ; AdditiveExpression recover r12\n')
-        self.compiler.add_function_stack_offset(-8)
 
-
-class MultiplicativeExpression(CComponent):
+class MultiplicativeExpression(ChainExpression):
     # cast-expression
     # multiplicative-expression * cast-expression
     # multiplicative-expression / cast-expression
     # multiplicative-expression % cast-expression
 
     def __init__(self, compiler, data):
-        super().__init__(compiler)
-        self.data = data
-        self.data_count = len(data)
+        super().__init__(compiler, data)
 
     def __repr__(self):
         return f'MultiplicativeExpression {self.data}'
@@ -1137,36 +1086,29 @@ class MultiplicativeExpression(CComponent):
         print(f'{" " * indent}MultiplicativeExpression')
         print(f'{" " * (indent + 4)}{self.data}')
 
-    def gen_asm(self, my_result_offset):
-        print(f'MultiplicativeExpression gen_asm {my_result_offset = } scope = {self.compiler.scope}')
+    def get_const_result(self):
+        # todo? not consistent with c
+        result = self.gen_asm_results[0]['value']
+        for index in range(1, self.data_count):
+            if self.data[index][0] == '*':
+                result *= self.gen_asm_results[index]['value']
+            elif self.data[index][0] == '/':
+                result = result // self.gen_asm_results[index]['value']
+            elif self.data[index][0] == '%':
+                result = result % self.gen_asm_results[index]['value']
 
-        # save r12
-        self.write_asm(f'    push r12 ; save r12\n')
-        self.compiler.add_function_stack_offset(8)
+        return result
 
-        # space for exp results
-        self.write_asm(f'    sub rsp, {8 * self.data_count} ; MultiplicativeExpression for exp result\n')
-        offset = self.compiler.get_function_stack_offset() + 8
-        self.compiler.add_function_stack_offset(8 * self.data_count)
-
-        result_offset = offset
-
-        # gen_asm for each
-        for item in self.data:
-            # print_yellow(item)
-            # pprint.pprint(item, indent = 4, width = 1)
-            item[1].gen_asm(offset)
-            offset += 8
-
-        # first to r12
-        self.write_asm(f'    mov r12, [rbp - {result_offset}] ; MultiplicativeExpression get first result\n')
-
+    def sub_items_gen_asm(self, result_offset, my_result_offset, set_result = True):
         for index in range(1, self.data_count):
             result_offset += 8
 
             # print_orange(f'MultiplicativeExpression item = {self.data[index]}')
             if self.data[index][0] == '*':
-                self.write_asm(f'    imul r12, [rbp - {result_offset}]\n')
+                if self.gen_asm_results[index]['type'] == 'const':
+                    self.write_asm(f'    imul r12, {self.gen_asm_results[index]["value"]}\n')
+                else:
+                    self.write_asm(f'    imul r12, [rbp - {result_offset}]\n')
             elif self.data[index][0] == '/':
                 # 32-bit int
                 # edx:eax / dword ptr [rbp - {result_offset}]
@@ -1178,9 +1120,9 @@ class MultiplicativeExpression(CComponent):
                 self.write_asm(f'    mov rdx, r12 ; set edx\n')
                 self.write_asm(f'    shr rdx, 32\n')
                 self.write_asm(f'    mov rax, r12 ; set eax\n')
-                self.write_asm(f'    and rax, right_32f\n') # 0xffffffff
+                self.write_asm(f'    and rax, right_32f\n')  # 0xffffffff
                 self.write_asm(f'    div dword ptr [rbp - {result_offset}]\n')
-                self.write_asm(f'    mov r12, rax\n') # save result to r12
+                self.write_asm(f'    mov r12, rax\n')  # save result to r12
                 self.write_asm(f'    pop rax\n')
                 self.write_asm(f'    pop rdx\n')
             elif self.data[index][0] == '%':
@@ -1197,14 +1139,8 @@ class MultiplicativeExpression(CComponent):
                 self.write_asm(f'    pop rdx\n')
 
         # set result
-        if my_result_offset:
+        if set_result:
             self.write_asm(f'    mov [rbp - {my_result_offset}], r12 ; MultiplicativeExpression set result\n')
-
-        # pop
-        self.write_asm(f'    add rsp, {8 * self.data_count} ; MultiplicativeExpression\n')
-        self.compiler.add_function_stack_offset(-8 * self.data_count)
-        self.write_asm(f'    pop r12 ; MultiplicativeExpression recover r12\n')
-        self.compiler.add_function_stack_offset(-8)
 
 
 class CastExpression(CComponent):
@@ -1224,10 +1160,10 @@ class CastExpression(CComponent):
         print(f'{" " * (indent + 4)}{self.casts}')
         print(f'{" " * (indent + 4)}{self.ue}')
 
-    def gen_asm(self, result_offset = None):
+    def gen_asm(self, result_offset, set_result = True):
         print(f'CastExpression gen_asm {result_offset = } scope = {self.compiler.scope}')
         # print(self.ue)
-        return self.ue.gen_asm(result_offset)
+        return self.ue.gen_asm(result_offset, set_result)
 
 
 class UnaryExpression(CComponent):
@@ -1238,12 +1174,11 @@ class UnaryExpression(CComponent):
     # sizeof unary-expression
     # sizeof ( type-name )
 
-    def __init__(self, compiler, pe = NoObject(), pp = NoObject(), mm = NoObject(), ue = NoObject(), uo = NoObject(),
+    def __init__(self, compiler, pe = NoObject(), pp = NoObject(), ue = NoObject(), uo = NoObject(),
                  cast = NoObject(), sizeof = NoObject(), tn = NoObject()):
         super().__init__(compiler)
         self.pe = pe
         self.pp = pp
-        self.mm = mm
         self.ue = ue
         self.uo = uo
         self.cast = cast
@@ -1251,37 +1186,56 @@ class UnaryExpression(CComponent):
         self.tn = tn
 
     def __repr__(self):
-        return f'UnaryExpression {self.pe, self.pp, self.mm, self.ue, self.uo, self.cast, self.sizeof, self.tn}'
+        return f'UnaryExpression {self.pe, self.pp, self.ue, self.uo, self.cast, self.sizeof, self.tn}'
 
     def print_me(self, indent):
         print(f'{" " * indent}UnaryExpression')
-        print(f'{" " * (indent + 4)}{self.pe, self.pp, self.mm, self.ue, self.uo, self.cast, self.sizeof, self.tn}')
+        print(f'{" " * (indent + 4)}{self.pe, self.pp, self.ue, self.uo, self.cast, self.sizeof, self.tn}')
 
-    def gen_asm(self, result_offset = None):
+    def gen_asm(self, result_offset, set_result = True):
         print(f'UnaryExpression gen_asm {result_offset = } scope = {self.compiler.scope}')
+        self.write_asm(f'    ; UnaryExpression gen_asm\n')
+
         if self.pe:
             return self.pe.gen_asm(result_offset)
         elif self.pp:
             data = self.ue.gen_asm(result_offset)
             if data['type'] == 'const':
-                raise CompilerError(f'++ on const')
+                raise CodeError(f'prefix {self.pp} on const')
+            elif data['type'] == 'mem':
+                raise CodeError(f'prefix {self.pp} on mem')
+            elif data['type'] == 'var':
+                if self.pp == '++':
+                    self.write_asm(f'    inc qword ptr [rbp - {data["offset"]}] ; ++\n')
+                else:
+                    self.write_asm(f'    dec qword ptr [rbp - {data["offset"]}] ; --\n')
 
-            self.write_asm(f'    inc qword ptr [rbp - {result_offset}] ; --\n')
-            return data
-        elif self.mm:
-            data = self.ue.gen_asm(result_offset)
-            if data['type'] == 'const':
-                raise CompilerError(f'-- on const')
+                if set_result:
+                    self.write_asm(f'    mov r14, [rbp - {data["offset"]}]\n')
+                    self.write_asm(f'    mov [rbp - {result_offset}], r14\n')
 
-            self.write_asm(f'    dec qword ptr [rbp - {result_offset}] ; ++\n')
             return data
         elif self.uo:
             # ['&', '*', '+', '-', '~', '!']
             if self.uo == '-':
-                self.cast.gen_asm(result_offset)
+                data = self.cast.gen_asm(result_offset)
+
+                # error
+                if data['type'] not in ['const', 'var']:
+                    raise CodeError(f"- on {data['type']}")
 
                 # c std 6.5.3.3
                 self.write_asm(f'    neg qword ptr [rbp - {result_offset}] ; negation\n')
+
+                if data['type'] == 'const':
+                    return {'type':'const', 'value':-data['value']}
+
+                return {'type':'mem', 'offset':result_offset}
+
+            raise CompilerError(f'wtfff')
+
+        raise CompilerError(f'wtfff2')
+
 
 class PostfixExpression(CComponent):
     # primary-expression
@@ -1306,8 +1260,9 @@ class PostfixExpression(CComponent):
         print(f'{" " * (indent + 4)}{self.primary}')
         print(f'{" " * (indent + 4)}{self.data}')
 
-    def gen_asm(self, result_offset = None):
+    def gen_asm(self, result_offset, set_result = True):
         print(f'PostfixExpression gen_asm {result_offset = } scope = {self.compiler.scope}')
+        self.write_asm(f'    ; PostfixExpression gen_asm\n')
         # print(self.ue)
         # self.pe.gen_asm()
 
@@ -1315,25 +1270,40 @@ class PostfixExpression(CComponent):
         #    self.write_asm(f'    ;PostfixExpression item\n')
 
         if self.primary.idf:
-            if self.data_count == 0:
-                return self.primary.gen_asm(result_offset)
+            # if self.data_count == 0:
+            #     return self.primary.gen_asm(result_offset)
+
+            scope_item = self.primary.gen_asm(result_offset)
+
+            # scope_item = self.compiler.scope[-1].get(self.primary.idf.name, None)
+            # if scope_item is None:
+            #     raise CompilerError(f'{self.primary.idf.name} not found')
+
+            print_red(f'scope_item = {scope_item}')
+            current_result = scope_item.copy() # {'type':'var', 'offset':scope_item['offset']}
 
             for item in self.data:
-                if item == '++':
-                    # print_red(f'scope = {self.compiler.scope[-1]}')
+                if item in ['++', '--']:
+                    if current_result['type'] == 'var':
+                        # print_red(f'scope = {self.compiler.scope[-1]}')
 
-                    scope_item = self.compiler.scope[-1].get(self.primary.idf.name, None)
-                    if scope_item is None:
-                        raise CompilerError(f'{self.primary.idf.name} not found')
+                        if result_offset is None:
+                            raise CompilerError(f'post {item} must has result_offset')
 
-                    self.write_asm(f'    inc qword ptr [rbp - {scope_item["offset"]}] ; {self.primary.idf.name}++\n')
-                    # self.write_asm(f'    add qword ptr [rbp - {scope_item["offset"]}], 1; {self.pe.idf.name}++\n')
-                elif item == '--':
-                    scope_item = self.compiler.scope[-1].get(self.primary.idf.name, None)
-                    if scope_item is None:
-                        raise CompilerError(f'{self.primary.idf.name} not found')
+                        # get original value
+                        self.write_asm(f'    mov r14, [rbp - {scope_item["offset"]}]\n')
+                        self.write_asm(f'    mov [rbp - {result_offset}], r14\n')
 
-                    self.write_asm(f'    dec qword ptr [rbp - {scope_item["offset"]}] ; {self.primary.idf.name}--\n')
+                        current_result = {'type':'mem', 'offset':result_offset}
+
+                        if item == '++':
+                            self.write_asm(f'    inc qword ptr [rbp - {scope_item["offset"]}] ; {self.primary.idf.name}++\n')
+                        else:
+                            self.write_asm(f'    dec qword ptr [rbp - {scope_item["offset"]}] ; {self.primary.idf.name}--\n')
+
+                    else:
+                        raise CodeError(f'post {item} on non var')
+
                 elif item[0] == '.':
                     self.write_asm(f'    ; {self.primary.idf.name}.{item[1]}\n')
                 elif item[0] == '->':
@@ -1344,10 +1314,6 @@ class PostfixExpression(CComponent):
                     # print_red(item)
                     # print_red(item[1])
                     # print_red(len(item[1]))
-
-                    scope_item = self.compiler.scope[-1].get(self.primary.idf.name, None)
-                    if scope_item is None:
-                        raise CompilerError(f'{self.primary.idf.name} not found')
 
                     print_yellow(f'arg item = {item}')
                     args_count = len(item[1])
@@ -1414,7 +1380,8 @@ class PostfixExpression(CComponent):
                     self.write_asm(f'\n    call {self.primary.idf.name} ; {len(item[1])} args. offset = {self.compiler.get_function_stack_offset()}\n')
                     self.write_asm(f'    ; call over offset = {self.compiler.get_function_stack_offset()}\n')
 
-                    self.write_asm(f'    mov [rbp - {result_offset}], rax ; save call result\n')
+                    if set_result:
+                        self.write_asm(f'    mov [rbp - {result_offset}], rax ; save call result\n')
 
                     # clean
                     self.write_asm(f'    add rsp, {8 * abi_storage_args_count} ; clean for function call args\n')
@@ -1428,20 +1395,23 @@ class PostfixExpression(CComponent):
 
                 else:
                     raise CompilerError(f'unknown postfix data {item}')
+
+            # return {'type':'mem', 'offset':result_offset}
+            return current_result
         elif self.primary.const:
             if self.data_count > 0:
-                raise CompilerError(f'postfix on const')
+                raise CodeError(f'postfix on const')
 
-            return self.primary.gen_asm(result_offset)
+            return self.primary.gen_asm(result_offset, set_result)
 
         elif self.primary.string:
             # "13ef"[0]; legal but ...
             if self.data_count > 0:
-                raise CompilerError(f'postfix on const')
+                raise CodeError(f'postfix on string')
 
-            return self.primary.gen_asm(result_offset)
+            return self.primary.gen_asm(result_offset, set_result)
         else:
-            self.primary.exp.gen_asm(result_offset)
+            return self.primary.exp.gen_asm(result_offset, set_result)
 
 
 class PrimaryExpression(CComponent):
@@ -1475,7 +1445,7 @@ class PrimaryExpression(CComponent):
         else:
             print(f'{" " * (indent + 4)}{self.exp}')
 
-    def gen_asm(self, result_offset = None):
+    def gen_asm(self, result_offset = None, set_result = True):
         print(f'PrimaryExpression gen_asm {result_offset = } scope = {self.compiler.scope}')
         # f.write(f'    ; {self.exp}\n')
         if self.idf:
@@ -1484,23 +1454,38 @@ class PrimaryExpression(CComponent):
 
             scope_item = self.compiler.scope[-1].get(self.idf.name, None)
             if scope_item is None:
-                raise CompilerError(f'{self.idf.name} not found')
+                raise CodeError(f'{self.idf.name} not found')
 
-            if result_offset:
-                self.write_asm(f'    push rax\n')
-                self.write_asm(f'    mov rax, [rbp - {scope_item["offset"]}] ; move var {self.idf.name}\n')
-                self.write_asm(f'    mov [rbp - {result_offset}], rax ; move var {self.idf.name} to offset {result_offset}\n')
-                self.write_asm(f'    pop rax\n')
+            print_red(f'{scope_item = }')
 
-            return {'type':'var', 'name':self.idf.name, 'offset':scope_item['offset']}
+            if set_result:
+                if scope_item['type'] == 'var':
+                    if 'global' in scope_item:
+                        self.write_asm(f'    mov [rbp - {result_offset}], {self.idf.name} ; move var {self.idf.name} to offset {result_offset}\n')
+                    else:
+                        self.write_asm(f'    push rax\n')
+                        self.write_asm(f'    mov rax, [rbp - {scope_item["offset"]}] ; move var {self.idf.name}\n')
+                        self.write_asm(f'    mov [rbp - {result_offset}], rax ; move var {self.idf.name} to offset {result_offset}\n')
+                        self.write_asm(f'    pop rax\n')
+                elif scope_item['type'] == 'function':
+                    self.write_asm(f'    lea r14, {scope_item["name"]}\n')
+                    self.write_asm(f'    mov [rbp - {result_offset}], r14 ; move function {self.idf.name} address to offset {result_offset}\n')
+
+            return scope_item
+
+            # if 'global' in scope_item: # global scope
+            #     return {'type':'var', 'name':self.idf.name, 'global':1}
+            # else:
+            #     return {'type':'var', 'name':self.idf.name, 'offset':scope_item['offset']}
         elif self.const:
             # self.write_asm(f'    ; PrimaryExpression get const {self.const}\n')
             # return 'const', self.const
-            self.write_asm(f'    mov qword ptr [rbp - {result_offset}], {self.const.const} ; mov const\n')
+            if set_result:
+                self.write_asm(f'    mov qword ptr [rbp - {result_offset}], {self.const.const} ; mov const\n')
             return {'type':'const', 'value':self.const.const}
         elif self.string:
             if len(self.string) == 0:
-                raise CompilerError('empty string')
+                raise CodeError('empty string')
 
             # todo: very long string
 
@@ -1523,7 +1508,7 @@ class PrimaryExpression(CComponent):
                     i += 1
                 else: # self.string[i] == '\\':
                     if i + 1 >= len(self.string):
-                        raise CompilerError(f'string escape error')
+                        raise CodeError(f'string escape error')
 
                     next_c = self.string[i + 1]
 
@@ -1547,12 +1532,15 @@ class PrimaryExpression(CComponent):
             self.compiler.item_id += 1
 
             # return 'string', string_var_name
-            self.write_asm(f'    lea r14, {string_var_name} ; load string {string_var_name}\n')
-            self.write_asm(f'    mov [rbp - {result_offset}], r14 ; load string {string_var_name}\n')
+            if set_result:
+                self.write_asm(f'    lea r14, {string_var_name} ; load string {string_var_name}\n')
+                self.write_asm(f'    mov [rbp - {result_offset}], r14 ; load string {string_var_name}\n')
 
             return {'type':'string', 'name':string_var_name}
         else:
             return self.exp.gen_asm()
+
+        raise CompilerError(f'PrimaryExpression return None')
 
 
 class ExpressionStatement(CComponent):
@@ -1569,12 +1557,23 @@ class ExpressionStatement(CComponent):
         print(f'{" " * indent}ExpressionStatement')
         self.exp.print_me(indent + 4)
 
-    def gen_asm(self, my_result_offset):
-        print(f'ExpressionStatement gen_asm {my_result_offset = } scope = {self.compiler.scope}')
+    def gen_asm(self):
+        print(f'ExpressionStatement gen_asm scope = {self.compiler.scope}')
         # f.write(f'    ; {self.exp}\n')
         # f.write(f'    ; ExpressionStatement\n')
         if self.exp:
-            self.exp.gen_asm(my_result_offset)
+            self.write_asm(f'    sub rsp, 8 ; SelectionStatement for exp result\n')
+            result_offset = self.compiler.add_function_stack_offset(8)
+
+            result = self.exp.gen_asm(result_offset)
+
+            # free
+            self.write_asm(f'    add rsp, 8 ; SelectionStatement free\n')
+            self.compiler.add_function_stack_offset(-8)
+
+            return result
+
+        raise CompilerError(f'wtf ExpressionStatement')
 
 
 class SelectionStatement(CComponent):
@@ -1582,22 +1581,63 @@ class SelectionStatement(CComponent):
     # if ( expression ) statement else statement
     # switch ( expression ) statement
 
-    def __init__(self, compiler, data: list):
+    def __init__(self, compiler, switch = NoObject(), exp = NoObject(), stmt_1 = NoObject(), stmt_2 = NoObject()):
         super().__init__(compiler)
-        self.data = data
-        self.data_count = len(data)
+        self.switch = switch
+        self.exp = exp
+        self.stmt_1 = stmt_1
+        self.stmt_2 = stmt_2
 
     def __repr__(self):
-        return f'SelectionStatement {self.data}'
+        return f'SelectionStatement {self.switch} {self.exp} {self.stmt_1} {self.stmt_2}'
 
     def print_me(self, indent):
-        print(f'{" " * indent}SelectionStatement len = {self.data_count}')
-        for item in self.data:
-            # if bi.hasattr('print_me'):
-            if hasattr(item, 'print_me'):
-                item.print_me(indent + 4)
-            else:
-                print(f'{" " * (indent + 4)}{item}')
+        print(f'{" " * indent}SelectionStatement {self.switch}')
+        print(f'{" " * indent}{self.exp}')
+        print(f'{" " * indent}{self.stmt_1}')
+        print(f'{" " * indent}{self.stmt_2}')
+
+    def gen_asm(self):
+        print(f'SelectionStatement gen_asm scope = {self.compiler.scope}')
+        # f.write(f'    ; {self.exp}\n')
+        # f.write(f'    ; ExpressionStatement\n')
+        if not self.switch:
+            self.write_asm(f'    sub rsp, 8 ; SelectionStatement for exp result\n')
+            result_offset = self.compiler.add_function_stack_offset(8)
+
+            self.exp.gen_asm(result_offset)
+
+            label_1_name = f'if_not_{self.compiler.item_id}'
+            self.compiler.item_id += 1
+
+            label_2_name = f'if_over_{self.compiler.item_id}'
+            self.compiler.item_id += 1
+
+            '''
+            cmp exp, 0
+            je if_not
+            stmt_1
+            jmp if_over
+            if_not:
+                stmt_2
+            if_over:
+            '''
+
+            self.write_asm(f'    cmp qword ptr [rbp - {result_offset}], 0\n    je {label_1_name}\n')
+            self.stmt_1.gen_asm()
+            self.write_asm(f'    jmp {label_2_name}\n')
+            self.write_asm(f'    {label_1_name}:\n')
+            if self.stmt_2:
+                self.stmt_2.gen_asm()
+            self.write_asm(f'    {label_2_name}:\n')
+
+            # free
+            self.write_asm(f'    add rsp, 8 ;\n')
+            self.compiler.add_function_stack_offset(-8)
+
+            return
+
+        raise CompilerError(f'wtf SelectionStatement')
 
 
 class IterationStatement(CComponent):
@@ -1606,22 +1646,141 @@ class IterationStatement(CComponent):
     # for ( expression? ; expression? ; expression? ) statement
     # for ( declaration expression? ; expression? ) statement
 
-    def __init__(self, compiler, data: list):
+    def __init__(self, compiler, loop_type: int, declaration = NoObject(), exp_1 = NoObject(), exp_2 = NoObject(), exp_3 = NoObject(), stmt = NoObject()):
         super().__init__(compiler)
-        self.data = data
-        self.data_count = len(data)
+        self.loop_type = loop_type
+        self.declaration = declaration
+        self.exp_1 = exp_1
+        self.exp_2 = exp_2
+        self.exp_3 = exp_3
+        self.stmt = stmt
 
     def __repr__(self):
-        return f'IterationStatement {self.data}'
+        return f'IterationStatement {self.loop_type} {self.declaration} {self.exp_1} {self.exp_2} {self.exp_3} {self.stmt}'
 
     def print_me(self, indent):
-        print(f'{" " * indent}IterationStatement len = {self.data_count}')
-        for item in self.data:
-            # if bi.hasattr('print_me'):
-            if hasattr(item, 'print_me'):
-                item.print_me(indent + 4)
-            else:
-                print(f'{" " * (indent + 4)}{item}')
+        print(f'{" " * indent}IterationStatement loop_type = {self.loop_type}')
+        self.declaration.print_me(indent + 4)
+        self.exp_1.print_me(indent + 4)
+        self.exp_2.print_me(indent + 4)
+        self.exp_3.print_me(indent + 4)
+        self.stmt.print_me(indent + 4)
+
+    def gen_asm(self):
+        print(f'IterationStatement gen_asm scope = {self.compiler.scope}')
+
+        if self.loop_type == 0:
+            '''
+            loop_start:
+            exp
+            cmp exp, 0
+            je loop_over
+            stmt
+            jmp loop_start
+            
+            loop_over:
+            '''
+
+            self.write_asm(f'    sub rsp, 8 ; IterationStatement for exp result\n')
+            self.compiler.add_function_stack_offset(8)
+
+            result_offset = self.compiler.get_function_stack_offset()
+
+            label_1_name = f'loop_start_{self.compiler.item_id}'
+            self.compiler.item_id += 1
+
+            label_2_name = f'loop_over_{self.compiler.item_id}'
+            self.compiler.item_id += 1
+
+            self.write_asm(f'    {label_1_name}:\n')
+            self.exp_1.gen_asm(result_offset)
+            self.write_asm(f'    cmp qword ptr [rbp - {result_offset}], 0\n    je {label_2_name}\n')
+            self.stmt.gen_asm()
+            self.write_asm(f'    jmp {label_1_name}\n')
+            self.write_asm(f'    {label_2_name}:\n')
+
+            # free
+            self.write_asm(f'    add rsp, 8 ;\n')
+            self.compiler.add_function_stack_offset(-8)
+        elif self.loop_type == 1:
+            '''
+            loop_start:
+            stmt
+            exp
+            cmp exp, 0
+            je loop_over
+            jmp loop_start
+            
+            loop_over:
+            '''
+
+            self.write_asm(f'    sub rsp, 8 ; IterationStatement for exp result\n')
+            self.compiler.add_function_stack_offset(8)
+
+            result_offset = self.compiler.get_function_stack_offset()
+
+            label_1_name = f'loop_start_{self.compiler.item_id}'
+            self.compiler.item_id += 1
+
+            label_2_name = f'loop_over_{self.compiler.item_id}'
+            self.compiler.item_id += 1
+
+            self.write_asm(f'    {label_1_name}:\n')
+            self.stmt.gen_asm()
+            self.exp_1.gen_asm(result_offset)
+            self.write_asm(f'    cmp qword ptr [rbp - {result_offset}], 0\n    je {label_2_name}\n')
+            self.write_asm(f'    jmp {label_1_name}\n')
+            self.write_asm(f'    {label_2_name}:\n')
+
+            # free
+            self.write_asm(f'    add rsp, 8 ;\n')
+            self.compiler.add_function_stack_offset(-8)
+        elif self.loop_type == 2:
+            '''
+            declaration or exp_1
+            
+            loop_start:
+            exp_2
+            cmp exp_2, 0
+            je loop_over
+            stmt
+            exp_3
+            jmp loop_start
+            
+            loop_over:
+            '''
+
+            if self.declaration:
+                self.declaration.gen_asm()
+            elif self.exp_1:
+                self.exp_1.gen_asm()
+
+            self.write_asm(f'    sub rsp, 8 ; IterationStatement for exp result\n')
+            result_offset = self.compiler.add_function_stack_offset(8)
+
+            label_1_name = f'loop_start_{self.compiler.item_id}'
+            self.compiler.item_id += 1
+
+            label_2_name = f'loop_over_{self.compiler.item_id}'
+            self.compiler.item_id += 1
+
+            self.write_asm(f'    {label_1_name}:\n')
+
+            if self.exp_2: # else forever
+                self.exp_2.gen_asm(result_offset)
+                self.write_asm(f'    cmp qword ptr [rbp - {result_offset}], 0\n    je {label_2_name}\n')
+
+            self.stmt.gen_asm()
+
+            if self.exp_3:
+                self.exp_3.gen_asm()
+
+            self.write_asm(f'    jmp {label_1_name}\n')
+            self.write_asm(f'    {label_2_name}:\n')
+
+            # free
+            self.write_asm(f'    add rsp, 8 ;\n')
+            self.compiler.add_function_stack_offset(-8)
 
 
 class JumpStatement(CComponent):
@@ -1699,8 +1858,9 @@ class InitDeclarator(CComponent):
 
 
 class Constant(CComponent):
-    def __init__(self, compiler, const):
+    def __init__(self, compiler, data_type, const):
         super().__init__(compiler)
+        self.data_type = data_type
         self.const = const
 
     def __repr__(self):
