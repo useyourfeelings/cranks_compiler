@@ -1,4 +1,4 @@
-
+PRINT_INDENT = 2
 
 class Color:
     ok = '\33[38;5;34m' # 2 34 35

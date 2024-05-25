@@ -7,6 +7,7 @@ struct SSS{
 */
 int print(char *s);
 int printf(char *s, ...);
+
 /*
 int wtf1(){
      ggggggggggggggg();
@@ -18,7 +19,7 @@ int wtf1(){
 }
 */
 
-
+/*
 int f1(){
     int v1;
     int v2 = 12345;
@@ -93,24 +94,78 @@ printf("xc printf %d wtf2\n", aa);
     }while(g > 0);
 }
 
-int f4(){
+int pointer(){
 
-    //int arrrrrrrrrrrrr[2][222];
+    int a = 666 +999;
+    //int **const* p;// = &a;
 
-    //arrrrrrrrrrrrr[0][0] = 1;
+    int * p;// = 2;
+
+    a = 2222;
+
+    //printf("pointer a = %d\n", a);
+
+    p = &a;
+    printf("pointer a = %d, p = 0x%x\n", a, p);
+
+    int *b = &a;
+
+    *p =  2* *b;
+
+    printf("pointer a = %d, p = 0x%x *p = %d\n", a, p, *p);
 }
+*/
 
+int array(){
+    int a = 10;
+    int arrrrrrr[3][10];
+
+    // arrrrrrr[a+1][2] = 1689;
+
+    int *p = &a;
+
+    arrrrrrr[1][2] = *p;//0x6666;
+
+    printf("array printf 0x%x\n", arrrrrrr[1][2]);
+    printf("array printf 0x%x\n", arrrrrrr[1][3]);
+    printf("array printf 0x%x\n", arrrrrrr[2][4]);
+    printf("array printf 0x%x\n", arrrrrrr[1][4]);
+    arrrrrrr[1][2] = 0x6667;
+    arrrrrrr[1][3] = 0x6668;
+    arrrrrrr[2][4] = 0x6669;
+    printf("array printf 0x%x\n", arrrrrrr[1][2]);
+    printf("array printf 0x%x\n", arrrrrrr[1][3]);
+    printf("array printf 0x%x\n", arrrrrrr[2][4]);
+    printf("array printf 0x%x\n", arrrrrrr[1][4]);
+    arrrrrrr[1][2] = 0x9999;
+    arrrrrrr[2][4] = arrrrrrr[1][2];
+    printf("array printf 0x%x\n", arrrrrrr[1][2]);
+    printf("array printf 0x%x\n", arrrrrrr[1][3]);
+    printf("array printf 0x%x\n", arrrrrrr[2][4]);
+    printf("array printf 0x%x\n", arrrrrrr[1][4]);
+
+    int b[3][4][5];
+    b[1][2][3] = b[2][3][4] = 0x3333;
+    printf("array printf 0x%x\n", b[1][2][3]);
+    printf("array printf 0x%x\n", b[2][3][4]);
+
+    *p = b[1][2][3] + 0x1111;
+    printf("array printf p = 0x%x *p = 0x%x\n", p, *p);
+
+    printf("array printf 0x%x 0x%x\n", a, 2*(1+a));
+    printf("array printf 0x%x\n", b[1][2][3] + b[2][3][4] + 1);
+}
 
 int main(){
     //f2();
     //int v2 = 3;
     //int v1 = 1 + 999 * 5 / v2 * 2 - 1665555555;
-    //f4();
-    f3();
+    array();
+    //f3();
 
     //printf("f1 xc printf \n");
 
-    loop1();
+    //loop1();
 
     //printf("xc printf wtf %d %d %s %d %d %d", 1, 22, "wtfffffffffff", 44, 555, 666);
 

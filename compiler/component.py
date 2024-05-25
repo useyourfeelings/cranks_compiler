@@ -1,6 +1,13 @@
 import pprint
-from compiler.tool import CompilerError, CodeError, print_red, print_yellow, print_green, print_orange
+from compiler.tool import CompilerError, CodeError, print_red, print_yellow, print_green, print_orange, PRINT_INDENT
+import copy
 
+TEMP_REG_0 = 'r10'
+TEMP_REG_1 = 'r11'
+TEMP_REG_2 = 'r12'
+TEMP_REG_3 = 'r13'
+TEMP_REG_4 = 'r14'
+TEMP_REG_5 = 'r15'
 
 class CComponent:
     def __init__(self, compiler):
@@ -29,7 +36,7 @@ class NoObject:
     def __next__(self):
         return None
 
-    def gen_asm(self):
+    def gen_asm(self, result_offset):
         raise CompilerError(f'NoObject gen_asm')
 
 
@@ -50,7 +57,7 @@ class TranslationUnit(CComponent):
     def print_me(self, indent = 0):
         print(f'\n{" " * indent}TranslationUnit len = {len(self.eds)}')
         for ed in self.eds:
-            ed.print_me(indent + 4)
+            ed.print_me(indent + PRINT_INDENT)
 
     def gen_asm(self):
         self.write_asm(f'\n    .code\n\n')
@@ -96,7 +103,7 @@ class FunctionDefinition(CComponent):
 
     def print_me(self, indent):
         print(f'{" " * indent}FunctionDefinition')
-        print(f'{" " * (indent + 4)}dss')
+        print(f'{" " * (indent + PRINT_INDENT)}dss')
         for ds in self.dss:
             # if bi.hasattr('print_me'):
             if hasattr(ds, 'print_me'):
@@ -104,10 +111,10 @@ class FunctionDefinition(CComponent):
             else:
                 print(f'{" " * (indent + 8)}{ds}')
 
-        print(f'{" " * (indent + 4)}{self.declarator}')
-        # print(f'{" " * (indent + 4)}{self.dl}')
-        # print(f'{" " * (indent + 4)}{self.cs}')
-        self.cs.print_me(indent + 4)
+        print(f'{" " * (indent + PRINT_INDENT)}{self.declarator}')
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.dl}')
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.cs}')
+        self.cs.print_me(indent + PRINT_INDENT)
 
     def gen_asm(self, global_scope = False):
         # for ds in self.dss:
@@ -169,15 +176,15 @@ class Declaration(CComponent):
 
     def print_me(self, indent):
         print(f'{" " * indent}Declaration')
-        # print(f'{" " * (indent + 4)}ds\n{" " * (indent + 8)}{self.ds}')
-        print(f'{" " * (indent + 4)}dss')
+        # print(f'{" " * (indent + PRINT_INDENT)}ds\n{" " * (indent + 8)}{self.ds}')
+        print(f'{" " * (indent + PRINT_INDENT)}dss')
         for ds in self.dss:
             # if bi.hasattr('print_me'):
             if hasattr(ds, 'print_me'):
                 ds.print_me(indent + 8)
             else:
                 print(f'{" " * (indent + 8)}{ds}')
-        print(f'{" " * (indent + 4)}idl')
+        print(f'{" " * (indent + PRINT_INDENT)}idl')
         if self.idl:
             for idtr in self.idl:
                 idtr.print_me(indent + 8)
@@ -234,27 +241,66 @@ class Declaration(CComponent):
         else:
             if self.dss[0].type_data == 'int':
                 for item in self.idl:
-                    if item.dtr[0]:  # pointer
-                        pass
-                    else:
-                        name = item.dtr[1]['name']
+                    name = item.dtr[1]['name']
 
-                        if item.dtr[1]['type'] == 'var':  # declaration
-                            # print(item.dtr[1][1])
-                            # self.write_asm(f'    ; Declaration var {self.dss[0].type_data} {item.dtr[1][1][0].name}\n')
-                            self.compiler.add_function_stack_offset(8)
-                            self.write_asm(f'    sub rsp, 8 ; Declaration var {self.dss[0].type_data} {name} offset = {self.compiler.get_function_stack_offset()}\n')
+                    if item.dtr[1]['type'] == 'var':  # declaration
+                        # print(item.dtr[1][1])
+                        # self.write_asm(f'    ; Declaration var {self.dss[0].type_data} {item.dtr[1][1][0].name}\n')
+                        offset = self.compiler.add_function_stack_offset(8)
+                        self.write_asm(f'    sub rsp, 8 ; Declaration var {self.dss[0].type_data} {name} offset = {offset}\n')
 
-                            scope_item = {'type':'var', 'data_type':self.dss[0].type_data, 'name':name, 'offset':self.compiler.get_function_stack_offset()}
-                            # self.compiler.scope[-1].append({'type':self.dss[0].type_data, 'name':item.dtr[1][1][0].name, 'offset':self.compiler.get_function_stack_offset()})
-                            self.compiler.scope[-1][scope_item['name']] = scope_item
+                        scope_item = {'type':'var', 'data_type':self.dss[0].type_data, 'name':name, 'offset':offset}
 
-                            print_red(f'{name} item.init = {item.init}')
-                            if isinstance(item.init, AssignmentExpression):
-                                item.init.gen_asm(scope_item['offset'])
+                        if item.dtr[0]:  # pointer
+                            scope_item['type'] = 'pointer'
+                            scope_item['pointer_data'] = item.dtr[0]
+                            # * = [[]]
+                            # * *const * = [[], ['const'], []]
 
-                        elif item.dtr[1]['type'] == 'array':
-                            self.write_asm(f'    ; Declaration array {self.dss[0].type_data} {name}\n')
+                        # self.compiler.scope[-1].append({'type':self.dss[0].type_data, 'name':item.dtr[1][1][0].name, 'offset':self.compiler.get_function_stack_offset()})
+                        self.compiler.scope[-1][scope_item['name']] = scope_item
+
+                        print_red(f'{name} item.init = {item.init}')
+                        if isinstance(item.init, AssignmentExpression):
+                            item.init.gen_asm(scope_item['offset'])
+
+                    elif item.dtr[1]['type'] == 'array':
+                        self.write_asm(f'    ; Declaration array {self.dss[0].type_data} {name}\n')
+
+                        print_red(f'array data {item.dtr[1]["array_data"]}')
+                        array_size = 1
+                        ranks = []
+
+                        for rank_exp in item.dtr[1]['array_data']['ranks']:
+                            print_red(f'{rank_exp = }')
+
+
+                            self.write_asm(f'    sub rsp, 8 ; Declaration array {self.dss[0].type_data} {name} for exp\n')
+                            result_offset = self.compiler.add_function_stack_offset(8)
+
+                            result = rank_exp.gen_asm(result_offset, set_result = False)
+
+                            # free
+                            self.write_asm(f'    add rsp, 8 ; Declaration array {self.dss[0].type_data} {name} for exp\n')
+                            self.compiler.add_function_stack_offset(-8)
+
+                            print_red(f'{result = }')
+                            # if result['type'] != 'const':
+                            #     raise CompilerError(f'value in [] must be const')
+
+                            if result['type'] != 'const':
+                                raise CodeError(f'array rank must be const')
+
+                            array_size *= result['value']
+                            ranks.append(result['value'])
+
+                        offset = self.compiler.add_function_stack_offset(8 * array_size)
+                        self.write_asm(f'    sub rsp, {8 * array_size} ; Declaration array {self.dss[0].type_data} {name} offset = {offset}\n')
+
+                        scope_item = {'type':'array', 'data_type':self.dss[0].type_data, 'name':name, 'offset':offset, 'dim':item.dtr[1]['array_data']['dim'], 'ranks':ranks}
+                        # self.compiler.scope[-1].append({'type':self.dss[0].type_data, 'name':item.dtr[1][1][0].name, 'offset':self.compiler.get_function_stack_offset()})
+                        self.compiler.scope[-1][scope_item['name']] = scope_item
+
 
             else:
                 raise CompilerError('no support 1')
@@ -285,9 +331,9 @@ class TypeSpecifier(CComponent):
     def print_me(self, indent):
         print(f'{" " * indent}TypeSpecifier')
         if hasattr(self.type_data, 'print_me'):
-            self.type_data.print_me(indent + 4)
+            self.type_data.print_me(indent + PRINT_INDENT)
         else:
-            print(f'{" " * (indent + 4)}{self.type_data}')
+            print(f'{" " * (indent + PRINT_INDENT)}{self.type_data}')
 
 
 class StructUnion(CComponent):
@@ -305,16 +351,16 @@ class StructUnion(CComponent):
 
     def print_me(self, indent):
         print(f'{" " * indent}{self.tp.name}')
-        print(f'{" " * (indent + 4)}name = {self.name}')
+        print(f'{" " * (indent + PRINT_INDENT)}name = {self.name}')
         if self.decls:
             for decl in self.decls:
                 # if bi.hasattr('print_me'):
                 if hasattr(decl, 'print_me'):
-                    decl.print_me(indent + 4)
+                    decl.print_me(indent + PRINT_INDENT)
                 else:
-                    print(f'{" " * (indent + 4)}{decl}')
+                    print(f'{" " * (indent + PRINT_INDENT)}{decl}')
         else:
-            print(f'{" " * (indent + 4)}NoObject()')
+            print(f'{" " * (indent + PRINT_INDENT)}NoObject()')
 
 
 class CompoundStatement(CComponent):
@@ -332,9 +378,9 @@ class CompoundStatement(CComponent):
         for bi in self.bil:
             # if bi.hasattr('print_me'):
             if hasattr(bi, 'print_me'):
-                bi.print_me(indent + 4)
+                bi.print_me(indent + PRINT_INDENT)
             else:
-                print(f'{" " * (indent + 4)}{bi}')
+                print(f'{" " * (indent + PRINT_INDENT)}{bi}')
 
     def gen_asm(self):
         for bi in self.bil:
@@ -373,9 +419,9 @@ class Statement(CComponent):
         for bi in self.bil:
             # if bi.hasattr('print_me'):
             if hasattr(bi, 'print_me'):
-                bi.print_me(indent + 4)
+                bi.print_me(indent + PRINT_INDENT)
             else:
-                print(f'{" " * (indent + 4)}{bi}')
+                print(f'{" " * (indent + PRINT_INDENT)}{bi}')
 
 
 class LabeledStatement(CComponent):
@@ -396,9 +442,9 @@ class LabeledStatement(CComponent):
         for item in self.data:
             # if bi.hasattr('print_me'):
             if hasattr(item, 'print_me'):
-                item.print_me(indent + 4)
+                item.print_me(indent + PRINT_INDENT)
             else:
-                print(f'{" " * (indent + 4)}{item}')
+                print(f'{" " * (indent + PRINT_INDENT)}{item}')
 
     def gen_asm(self):
         if self.data[0] not in ['case', 'default']:
@@ -409,33 +455,32 @@ class Expression(CComponent):
     # assignment-expression
     # expression , assignment-expression
 
-    def __init__(self, compiler, data: list):
+    def __init__(self, compiler, aes: list):
         super().__init__(compiler)
-        self.data = data
-        self.data_count = len(data)
+        self.aes = aes
 
     def __repr__(self):
-        return f'Expression {self.data}'
+        return f'Expression {self.aes}'
 
     def print_me(self, indent):
-        print(f'{" " * indent}Expression len = {self.data_count}')
-        for item in self.data:
+        print(f'{" " * indent}Expression len = {len(self.aes)}')
+        for ae in self.aes:
             # if bi.hasattr('print_me'):
-            if hasattr(item, 'print_me'):
-                item.print_me(indent + 4)
+            if hasattr(ae, 'print_me'):
+                ae.print_me(indent + PRINT_INDENT)
             else:
-                print(f'{" " * (indent + 4)}{item}')
+                print(f'{" " * (indent + PRINT_INDENT)}{ae}')
 
     def gen_asm(self, my_result_offset = None, set_result = True):
         print(f'Expression gen_asm scope = {self.compiler.scope}')
 
         result = None
 
-        for item in self.data:
+        for ae in self.aes:
             # self.write_asm(f'    ; Expression\n')
             # print_yellow(item)
             self.write_asm(f'\n    ; Expression start offset = {self.compiler.get_function_stack_offset()} my_result_offset = {my_result_offset}\n')
-            result = item.gen_asm(my_result_offset, set_result)
+            result = ae.gen_asm(my_result_offset, set_result)
             self.write_asm(f'    ; Expression over offset = {self.compiler.get_function_stack_offset()}\n\n')
 
         return result
@@ -447,7 +492,7 @@ class AssignmentExpression(CComponent):
         super().__init__(compiler)
         self.ce = ce
         self.ue = ue
-        self.opt = opt
+        self.opt = opt # = *= /= %= += -= <<= >>= &= ^= |=
         self.ae = ae
 
     def __repr__(self):
@@ -456,11 +501,13 @@ class AssignmentExpression(CComponent):
     def print_me(self, indent):
         print(f'{" " * indent}AssignmentExpression')
         if self.ce:
-            print(f'{" " * (indent + 4)}{self.ce}')
+            # print(f'{" " * (indent + PRINT_INDENT)}{self.ce}')
+            self.ce.print_me(indent + PRINT_INDENT)
         else:
-            print(f'{" " * (indent + 4)}{self.ue}')
-            print(f'{" " * (indent + 4)}{self.opt}')
-            self.ae.print_me(indent + 4)
+            # print(f'{" " * (indent + PRINT_INDENT)}{self.ue}')
+            self.ue.print_me(indent + PRINT_INDENT)
+            print(f'{" " * (indent + PRINT_INDENT)}{self.opt}')
+            self.ae.print_me(indent + PRINT_INDENT)
 
     def gen_asm(self, my_result_offset, set_result = True):
         print(f'AssignmentExpression gen_asm {my_result_offset = } scope = {self.compiler.scope}')
@@ -469,14 +516,93 @@ class AssignmentExpression(CComponent):
         else:
             # self.write_asm(f'    sub rsp 8; space for unary-expression\n')
             # self.compiler.add_function_stack_offset(8)
-            data = self.ue.gen_asm(my_result_offset, set_result = False)
-            if data['type'] == 'var':
+            ue_data = self.ue.gen_asm(my_result_offset, set_result = False)
+            if ue_data['type'] in ['var', 'pointer']:
                 # '=', '*=', '/=', '%=', '+=', '-=', '<<=', '>>=', '&=', '^=', '|='
                 # v1 = xxx
                 if self.opt == '=':
-                    self.ae.gen_asm(data['offset'])
+                    self.ae.gen_asm(ue_data['offset'])
 
-            return {'type':'mem', 'offset':data['offset']}
+                    return ue_data
+            elif ue_data['type'] == 'de_pointer':
+                # case 1: *p = 123;
+                # case 2: abc = *p;
+                # a = *b = *c
+                # *a = *b = 1
+
+                if self.opt == '=':
+                    self.write_asm(f'    sub rsp, 8 ; for AssignmentExpression\n')
+                    offset = self.compiler.add_function_stack_offset(8)
+
+                    ae_data = self.ae.gen_asm(offset)
+                    # print_red(ae_data)
+
+                    # ae_data to address
+                    if ae_data['type'] == 'de_pointer':
+                        # *a = *b
+                        self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {offset}]\n')
+                        self.write_asm(f'    mov {TEMP_REG_5}, [rbp - {ue_data["offset"]}]\n')
+                        self.write_asm(f'    mov {TEMP_REG_3}, [{TEMP_REG_4}]\n')
+                        self.write_asm(f'    mov [{TEMP_REG_5}], {TEMP_REG_3} ; save value at address to address\n')
+                    elif ae_data['type'] == 'de_array':
+                        # *p = b[1]
+                        self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {offset}]\n')
+                        self.write_asm(f'    mov {TEMP_REG_5}, [rbp - {my_result_offset}]\n')
+                        self.write_asm(f'    mov {TEMP_REG_3}, [{TEMP_REG_4}]\n')
+                        self.write_asm(f'    mov [{TEMP_REG_5}], {TEMP_REG_3} ; save value at address to address\n')
+                    else:
+                        # *a = 123
+                        self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {offset}]\n')
+                        self.write_asm(f'    mov {TEMP_REG_5}, [rbp - {ue_data["offset"]}]\n')
+                        self.write_asm(f'    mov [{TEMP_REG_5}], {TEMP_REG_4} ; save value to address\n')
+
+                    # free
+                    self.write_asm(f'    add rsp, 8 ; for AssignmentExpression\n')
+                    self.compiler.add_function_stack_offset(-8)
+
+                    return ue_data
+                raise
+            elif ue_data['type'] == 'de_array':
+                if self.opt == '=':
+                    self.write_asm(f'    sub rsp, 8 ; for AssignmentExpression\n')
+                    offset = self.compiler.add_function_stack_offset(8)
+
+                    ae_data = self.ae.gen_asm(offset)
+                    # print_red(ae_data)
+
+                    # ae_data to address
+                    if ae_data['type'] == 'de_pointer':
+                        # a[1] = *b
+                        self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {offset}]\n')
+                        self.write_asm(f'    mov {TEMP_REG_5}, [rbp - {my_result_offset}]\n')
+                        self.write_asm(f'    mov {TEMP_REG_3}, [{TEMP_REG_4}]\n')
+                        self.write_asm(f'    mov [{TEMP_REG_5}], {TEMP_REG_3} ; save value at address to address\n')
+                    elif ae_data['type'] == 'de_array':
+                        # a[1] = b[1]
+                        self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {offset}]\n')
+                        self.write_asm(f'    mov {TEMP_REG_5}, [rbp - {my_result_offset}]\n')
+                        self.write_asm(f'    mov {TEMP_REG_3}, [{TEMP_REG_4}]\n')
+                        self.write_asm(f'    mov [{TEMP_REG_5}], {TEMP_REG_3} ; save value at address to address\n')
+                    else:
+                        # a[1] = 123
+                        # a[2][3] = 123
+                        self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {offset}]\n')
+                        self.write_asm(f'    mov {TEMP_REG_5}, [rbp - {my_result_offset}]; get dest address\n')
+                        self.write_asm(f'    mov [{TEMP_REG_5}], {TEMP_REG_4} ; save value to address\n')
+
+                    # free
+                    self.write_asm(f'    add rsp, 8 ; for AssignmentExpression\n')
+                    self.compiler.add_function_stack_offset(-8)
+
+                    return ue_data
+                raise
+            else:
+                raise CodeError(f'AssignmentExpression wrong ue type {ue_data["type"]}')
+
+            print_red(ue_data)
+
+            raise
+            return {'type':'mem', 'offset':ue_data['offset']}
 
 
 class ConditionalExpression(CComponent):
@@ -494,7 +620,12 @@ class ConditionalExpression(CComponent):
 
     def print_me(self, indent):
         print(f'{" " * indent}ConditionalExpression')
-        print(f'{" " * (indent + 4)}{self.loe, self.exp, self.ce}')
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.loe}')
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.exp}')
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.ce}')
+        self.loe.print_me(indent + PRINT_INDENT)
+        self.exp.print_me(indent + PRINT_INDENT)
+        self.ce.print_me(indent + PRINT_INDENT)
 
     def gen_asm(self, my_result_offset, set_result = True):
         print(f'ConditionalExpression gen_asm {my_result_offset = } scope = {self.compiler.scope}')
@@ -511,14 +642,14 @@ class ConditionalExpression(CComponent):
 caller makes space at my_result_offset
 
 gen_asm(self, my_result_offset):
-    choose a reg like r12
-    push r12
+    choose a reg like {TEMP_REG_0}
+    push {TEMP_REG_0}
     make slots for subitems results
     gen_asm(slot) for each subitem
-    calc results, may use r12.
+    calc results, may use {TEMP_REG_0}.
     save final result in my_result_offset
     free space
-    pop r12
+    pop {TEMP_REG_0}
 '''
 
 
@@ -530,6 +661,17 @@ class ChainExpression(CComponent):
 
         self.gen_asm_results = []
 
+        self.opt = None
+
+    def print_me(self, indent):
+        print(f'{" " * indent}{self.__class__.__name__}')
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.data}')
+        for item in self.data:
+            item.print_me(indent + PRINT_INDENT)
+
+    def set_opt(self, opt):
+        self.opt = opt
+
     def get_const_result(self):
         return None
 
@@ -540,13 +682,13 @@ class ChainExpression(CComponent):
         print(f'ChainExpression gen_asm {my_result_offset = } scope = {self.compiler.scope}')
 
         if self.data_count == 1:
-            if isinstance(self.data[0], tuple):
-                return self.data[0][1].gen_asm(my_result_offset, set_result)
-            else:
-                return self.data[0].gen_asm(my_result_offset, set_result)
+            # if isinstance(self.data[0], tuple):
+            #     return self.data[0][1].gen_asm(my_result_offset, set_result)
+            # else:
+            return self.data[0].gen_asm(my_result_offset, set_result)
 
-        # save r12
-        self.write_asm(f'    push r12 ; save r12\n')
+        # save {TEMP_REG_0}
+        self.write_asm(f'    push {TEMP_REG_0} ; save {TEMP_REG_0}\n')
         self.compiler.add_function_stack_offset(8)
 
         # space for exp results
@@ -563,15 +705,20 @@ class ChainExpression(CComponent):
         # gen_asm for each
         for item in self.data:
             # print_red(f'item = {item}')
-            if isinstance(item, tuple):
-                result = item[1].gen_asm(offset)
-            else:
-                result = item.gen_asm(offset)
+            # if isinstance(item, tuple):
+            #     result = item[1].gen_asm(offset)
+            # else:
+            result = item.gen_asm(offset)
 
             if result['type'] in ['string']:
                 # ok if just one item
                 if self.data_count > 1:
                     raise CodeError(f'wtf on string [{result["name"]}]')
+            elif result['type'] in ['de_pointer', 'de_array']:
+                # get value from address
+                self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {offset}]\n')
+                self.write_asm(f'    mov {TEMP_REG_3}, [{TEMP_REG_4}]\n')
+                self.write_asm(f'    mov [rbp - {offset}], {TEMP_REG_3}\n')
 
             if result['type'] != 'const':
                 all_const = False
@@ -591,20 +738,20 @@ class ChainExpression(CComponent):
             # free
             self.write_asm(f'    add rsp, {8 * self.data_count} ; ChainExpression\n')
             self.compiler.add_function_stack_offset(-8 * self.data_count)
-            self.write_asm(f'    pop r12 ; ChainExpression recover r12\n')
+            self.write_asm(f'    pop {TEMP_REG_0} ; ChainExpression recover {TEMP_REG_0}\n')
             self.compiler.add_function_stack_offset(-8)
 
             return {'type':'const', 'value':result}
 
-        # first to r12
-        self.write_asm(f'    mov r12, [rbp - {result_offset}] ; MultiplicativeExpression get first result\n')
+        # first to {TEMP_REG_0}
+        # self.write_asm(f'    mov {TEMP_REG_0}, [rbp - {result_offset}] ; MultiplicativeExpression get first result\n')
 
         self.sub_items_gen_asm(result_offset, my_result_offset, set_result)
 
         # pop
-        self.write_asm(f'    add rsp, {8 * self.data_count} ; MultiplicativeExpression\n')
+        self.write_asm(f'    add rsp, {8 * self.data_count} ; ChainExpression\n')
         self.compiler.add_function_stack_offset(-8 * self.data_count)
-        self.write_asm(f'    pop r12 ; MultiplicativeExpression recover r12\n')
+        self.write_asm(f'    pop {TEMP_REG_0} ; ChainExpression recover {TEMP_REG_0}\n')
         self.compiler.add_function_stack_offset(-8)
 
         if self.data_count == 1:
@@ -624,9 +771,11 @@ class LogicalOrExpression(ChainExpression):
     def __repr__(self):
         return f'LogicalOrExpression {self.data}'
 
-    def print_me(self, indent):
+    def print_me1(self, indent):
         print(f'{" " * indent}LogicalOrExpression')
-        print(f'{" " * (indent + 4)}{self.data}')
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.data}')
+        for item in self.data:
+            item.print_me(indent + PRINT_INDENT)
 
     def get_const_result(self):
         # todo? not consistent with c
@@ -650,13 +799,14 @@ class LogicalOrExpression(ChainExpression):
             cmp vx 0
             jne cmp_or_ok
 
-            mov r12, 0
+            mov {TEMP_REG_0}, 0
             jmp cmp_done
 
             cmp_or_ok:
-                mov r12, 1
+                mov {TEMP_REG_0}, 1
             cmp_done:
         """
+
 
         label_1_name = f'cmp_or_ok_{self.compiler.item_id}'
         self.compiler.item_id += 1
@@ -683,9 +833,11 @@ class LogicalAndExpression(ChainExpression):
     def __repr__(self):
         return f'LogicalAndExpression {self.data}'
 
-    def print_me(self, indent):
+    def print_me1(self, indent):
         print(f'{" " * indent}LogicalAndExpression')
-        print(f'{" " * (indent + 4)}{self.data}')
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.data}')
+        for item in self.data:
+            item.print_me(indent + PRINT_INDENT)
 
     def get_const_result(self):
         # todo? not consistent with c
@@ -709,13 +861,16 @@ class LogicalAndExpression(ChainExpression):
             cmp vx 0
             je cmp_and_fail
 
-            mov r12, 1
+            mov {TEMP_REG_0}, 1
             jmp cmp_done
 
             cmp_and_fail:
-                mov r12, 0
+                mov {TEMP_REG_0}, 0
             cmp_done:
         """
+
+        # first to {TEMP_REG_0}
+        self.write_asm(f'    mov {TEMP_REG_0}, [rbp - {result_offset}] ; get first result\n')
 
         label_1_name = f'cmp_and_fail_{self.compiler.item_id}'
         self.compiler.item_id += 1
@@ -742,9 +897,11 @@ class InclusiveOrExpression(ChainExpression):
     def __repr__(self):
         return f'InclusiveOrExpression {self.data}'
 
-    def print_me(self, indent):
+    def print_me1(self, indent):
         print(f'{" " * indent}InclusiveOrExpression')
-        print(f'{" " * (indent + 4)}{self.data}')
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.data}')
+        for item in self.data:
+            item.print_me(indent + PRINT_INDENT)
 
     def get_const_result(self):
         # todo? not consistent with c
@@ -755,17 +912,20 @@ class InclusiveOrExpression(ChainExpression):
         return result
 
     def sub_items_gen_asm(self, result_offset, my_result_offset, set_result = True):
+        # first to {TEMP_REG_0}
+        self.write_asm(f'    mov {TEMP_REG_0}, [rbp - {result_offset}] ; get first result\n')
+
         for index in range(1, self.data_count):
             result_offset += 8
 
             '''
-            and r12, xxx
+            and {TEMP_REG_0}, xxx
             '''
-            self.write_asm(f'    or r12, [rbp - {result_offset}]\n')
+            self.write_asm(f'    or {TEMP_REG_0}, [rbp - {result_offset}]\n')
 
         # set result
         if set_result:
-            self.write_asm(f'    mov [rbp - {my_result_offset}], r12 ; InclusiveOrExpression set result\n')
+            self.write_asm(f'    mov [rbp - {my_result_offset}], {TEMP_REG_0} ; InclusiveOrExpression set result\n')
 
 
 class ExclusiveOrExpression(ChainExpression):
@@ -778,9 +938,11 @@ class ExclusiveOrExpression(ChainExpression):
     def __repr__(self):
         return f'ExclusiveOrExpression {self.data}'
 
-    def print_me(self, indent):
+    def print_me1(self, indent):
         print(f'{" " * indent}ExclusiveOrExpression')
-        print(f'{" " * (indent + 4)}{self.data}')
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.data}')
+        for item in self.data:
+            item.print_me(indent + PRINT_INDENT)
 
     def get_const_result(self):
         # todo? not consistent with c
@@ -791,16 +953,19 @@ class ExclusiveOrExpression(ChainExpression):
         return result
 
     def sub_items_gen_asm(self, result_offset, my_result_offset, set_result = True):
+        # first to {TEMP_REG_0}
+        self.write_asm(f'    mov {TEMP_REG_0}, [rbp - {result_offset}] ; get first result\n')
+
         for index in range(1, self.data_count):
             result_offset += 8
             '''
-            and r12, xxx
+            and {TEMP_REG_0}, xxx
             '''
-            self.write_asm(f'    xor r12, [rbp - {result_offset}]\n')
+            self.write_asm(f'    xor {TEMP_REG_0}, [rbp - {result_offset}]\n')
 
         # set result
         if set_result:
-            self.write_asm(f'    mov [rbp - {my_result_offset}], r12 ; ExclusiveOrExpression set result\n')
+            self.write_asm(f'    mov [rbp - {my_result_offset}], {TEMP_REG_0} ; ExclusiveOrExpression set result\n')
 
 
 class AndExpression(ChainExpression):
@@ -813,9 +978,11 @@ class AndExpression(ChainExpression):
     def __repr__(self):
         return f'AndExpression {self.data}'
 
-    def print_me(self, indent):
+    def print_m1e(self, indent):
         print(f'{" " * indent}AndExpression')
-        print(f'{" " * (indent + 4)}{self.data}')
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.data}')
+        for item in self.data:
+            item.print_me(indent + PRINT_INDENT)
 
     def get_const_result(self):
         # todo? not consistent with c
@@ -826,17 +993,20 @@ class AndExpression(ChainExpression):
         return result
 
     def sub_items_gen_asm(self, result_offset, my_result_offset, set_result = True):
+        # first to {TEMP_REG_0}
+        self.write_asm(f'    mov {TEMP_REG_0}, [rbp - {result_offset}] ; get first result\n')
+
         for index in range(1, self.data_count):
             result_offset += 8
 
             '''
-            and r12, xxx
+            and {TEMP_REG_0}, xxx
             '''
-            self.write_asm(f'    and r12, [rbp - {result_offset}]\n')
+            self.write_asm(f'    and {TEMP_REG_0}, [rbp - {result_offset}]\n')
 
         # set result
         if set_result:
-            self.write_asm(f'    mov [rbp - {my_result_offset}], r12 ; set result\n')
+            self.write_asm(f'    mov [rbp - {my_result_offset}], {TEMP_REG_0} ; set result\n')
 
 
 class EqualityExpression(ChainExpression):
@@ -850,20 +1020,25 @@ class EqualityExpression(ChainExpression):
     def __repr__(self):
         return f'EqualityExpression {self.data}'
 
-    def print_me(self, indent):
+    def print_me1(self, indent):
         print(f'{" " * indent}EqualityExpression')
-        print(f'{" " * (indent + 4)}{self.data}')
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.data}')
+        for item in self.data:
+            if hasattr(item, 'print_me'):
+                item.print_me(indent + PRINT_INDENT)
+            else:
+                print(f'{" " * (indent + PRINT_INDENT)}{item}')
 
     def get_const_result(self):
         # todo? not consistent with c
         result = self.gen_asm_results[0]['value']
         for index in range(1, self.data_count):
-            if self.data[index][0] == '==':
+            if self.data[index].opt == '==':
                 if result < self.gen_asm_results[index]['value']:
                     result = 1
                 else:
                     result = 0
-            elif self.data[index][0] == '!=':
+            elif self.data[index].opt == '!=':
                 if result > self.gen_asm_results[index]['value']:
                     result = 1
                 else:
@@ -872,6 +1047,9 @@ class EqualityExpression(ChainExpression):
         return result
 
     def sub_items_gen_asm(self, result_offset, my_result_offset, set_result = True):
+        # first to {TEMP_REG_0}
+        self.write_asm(f'    mov {TEMP_REG_0}, [rbp - {result_offset}] ; get first result\n')
+
         for index in range(1, self.data_count):
             result_offset += 8
 
@@ -880,26 +1058,26 @@ class EqualityExpression(ChainExpression):
             label_2_name = f'cmp_label_{self.compiler.item_id}'
             self.compiler.item_id += 1
 
-            if self.data[index][0] == '==':
+            if self.data[index].opt == '==':
                 '''
-                cmp r12, xxx
+                cmp {TEMP_REG_0}, xxx
                 je label_1
-                mov r12, 0
+                mov {TEMP_REG_0}, 0
                 jmp label_2
                 label_1:
-                    mov r12, 1
+                    mov {TEMP_REG_0}, 1
                 label_2:
                 '''
 
-                self.write_asm(f'    cmp r12, [rbp - {result_offset}]\n    je {label_1_name}\n    mov r12, 0\n    jmp {label_2_name}\n    {label_1_name}:\n        mov r12, 1\n    {label_2_name}:\n')
-            elif self.data[index][0] == '!=':
-                self.write_asm(f'    cmp r12, [rbp - {result_offset}]\n    jne {label_1_name}\n    mov r12, 0\n    jmp {label_2_name}\n    {label_1_name}:\n        mov r12, 1\n    {label_2_name}:\n')
+                self.write_asm(f'    cmp {TEMP_REG_0}, [rbp - {result_offset}]\n    je {label_1_name}\n    mov {TEMP_REG_0}, 0\n    jmp {label_2_name}\n    {label_1_name}:\n        mov {TEMP_REG_0}, 1\n    {label_2_name}:\n')
+            elif self.data[index].opt == '!=':
+                self.write_asm(f'    cmp {TEMP_REG_0}, [rbp - {result_offset}]\n    jne {label_1_name}\n    mov {TEMP_REG_0}, 0\n    jmp {label_2_name}\n    {label_1_name}:\n        mov {TEMP_REG_0}, 1\n    {label_2_name}:\n')
             else:
                 raise CompilerError(f'wtf')
 
         # set result
         if set_result:
-            self.write_asm(f'    mov [rbp - {my_result_offset}], r12 ; EqualityExpression set result\n')
+            self.write_asm(f'    mov [rbp - {my_result_offset}], {TEMP_REG_0} ; EqualityExpression set result\n')
 
 
 class RelationalExpression(ChainExpression):
@@ -915,30 +1093,32 @@ class RelationalExpression(ChainExpression):
     def __repr__(self):
         return f'RelationalExpression {self.data}'
 
-    def print_me(self, indent):
+    def print_me1(self, indent):
         print(f'{" " * indent}RelationalExpression')
-        print(f'{" " * (indent + 4)}{self.data}')
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.data}')
+        for item in self.data:
+            item.print_me(indent + PRINT_INDENT)
 
     def get_const_result(self):
         # todo? not consistent with c
         result = self.gen_asm_results[0]['value']
         for index in range(1, self.data_count):
-            if self.data[index][0] == '<':
+            if self.data[index].opt == '<':
                 if result < self.gen_asm_results[index]['value']:
                     result = 1
                 else:
                     result = 0
-            elif self.data[index][0] == '>':
+            elif self.data[index].opt == '>':
                 if result > self.gen_asm_results[index]['value']:
                     result = 1
                 else:
                     result = 0
-            elif self.data[index][0] == '<=':
+            elif self.data[index].opt == '<=':
                 if result <= self.gen_asm_results[index]['value']:
                     result = 1
                 else:
                     result = 0
-            elif self.data[index][0] == '>=':
+            elif self.data[index].opt == '>=':
                 if result >= self.gen_asm_results[index]['value']:
                     result = 1
                 else:
@@ -947,6 +1127,9 @@ class RelationalExpression(ChainExpression):
         return result
 
     def sub_items_gen_asm(self, result_offset, my_result_offset, set_result = True):
+        # first to {TEMP_REG_0}
+        self.write_asm(f'    mov {TEMP_REG_0}, [rbp - {result_offset}] ; get first result\n')
+
         for index in range(1, self.data_count):
             result_offset += 8
 
@@ -955,30 +1138,30 @@ class RelationalExpression(ChainExpression):
             label_2_name = f'cmp_label_{self.compiler.item_id}'
             self.compiler.item_id += 1
 
-            if self.data[index][0] == '<':
+            if self.data[index].opt == '<':
                 '''
-                cmp r12, xxx
+                cmp {TEMP_REG_0}, xxx
                 jl label_1
-                mov r12, 0
+                mov {TEMP_REG_0}, 0
                 jmp label_2
                 label_1:
-                    mov r12, 1
+                    mov {TEMP_REG_0}, 1
                 label_2:
                 '''
 
-                self.write_asm(f'    cmp r12, [rbp - {result_offset}]\n    jl {label_1_name}\n    mov r12, 0\n    jmp {label_2_name}\n    {label_1_name}:\n        mov r12, 1\n    {label_2_name}:\n')
-            elif self.data[index][0] == '>':
-                self.write_asm(f'    cmp r12, [rbp - {result_offset}]\n    jg {label_1_name}\n    mov r12, 0\n    jmp {label_2_name}\n    {label_1_name}:\n        mov r12, 1\n    {label_2_name}:\n')
-            elif self.data[index][0] == '<=':
-                self.write_asm(f'    cmp r12, [rbp - {result_offset}]\n    jle {label_1_name}\n    mov r12, 0\n    jmp {label_2_name}\n    {label_1_name}:\n        mov r12, 1\n    {label_2_name}:\n')
-            elif self.data[index][0] == '>=':
-                self.write_asm(f'    cmp r12, [rbp - {result_offset}]\n    jge {label_1_name}\n    mov r12, 0\n    jmp {label_2_name}\n    {label_1_name}:\n        mov r12, 1\n    {label_2_name}:\n')
+                self.write_asm(f'    cmp {TEMP_REG_0}, [rbp - {result_offset}]\n    jl {label_1_name}\n    mov {TEMP_REG_0}, 0\n    jmp {label_2_name}\n    {label_1_name}:\n        mov {TEMP_REG_0}, 1\n    {label_2_name}:\n')
+            elif self.data[index].opt == '>':
+                self.write_asm(f'    cmp {TEMP_REG_0}, [rbp - {result_offset}]\n    jg {label_1_name}\n    mov {TEMP_REG_0}, 0\n    jmp {label_2_name}\n    {label_1_name}:\n        mov {TEMP_REG_0}, 1\n    {label_2_name}:\n')
+            elif self.data[index].opt == '<=':
+                self.write_asm(f'    cmp {TEMP_REG_0}, [rbp - {result_offset}]\n    jle {label_1_name}\n    mov {TEMP_REG_0}, 0\n    jmp {label_2_name}\n    {label_1_name}:\n        mov {TEMP_REG_0}, 1\n    {label_2_name}:\n')
+            elif self.data[index].opt == '>=':
+                self.write_asm(f'    cmp {TEMP_REG_0}, [rbp - {result_offset}]\n    jge {label_1_name}\n    mov {TEMP_REG_0}, 0\n    jmp {label_2_name}\n    {label_1_name}:\n        mov {TEMP_REG_0}, 1\n    {label_2_name}:\n')
             else:
                 raise CompilerError(f'wtf')
 
         # set result
         if set_result:
-            self.write_asm(f'    mov [rbp - {my_result_offset}], r12 ; RelationalExpression set result\n')
+            self.write_asm(f'    mov [rbp - {my_result_offset}], {TEMP_REG_0} ; RelationalExpression set result\n')
 
 
 class ShiftExpression(ChainExpression):
@@ -992,22 +1175,27 @@ class ShiftExpression(ChainExpression):
     def __repr__(self):
         return f'ShiftExpression {self.data}'
 
-    def print_me(self, indent):
+    def print_me1(self, indent):
         print(f'{" " * indent}ShiftExpression')
-        print(f'{" " * (indent + 4)}{self.data}')
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.data}')
+        for item in self.data:
+            item.print_me(indent + PRINT_INDENT)
 
     def get_const_result(self):
         # todo? not consistent with c
         result = self.gen_asm_results[0]['value']
         for index in range(1, self.data_count):
-            if self.data[index][0] == '<<':
+            if self.data[index].opt == '<<':
                 result <<= self.gen_asm_results[index]['value']
-            elif self.data[index][0] == '>>':
+            elif self.data[index].opt == '>>':
                 result >>= self.gen_asm_results[index]['value']
 
         return result
 
     def sub_items_gen_asm(self, result_offset, my_result_offset, set_result = True):
+        # first to {TEMP_REG_0}
+        self.write_asm(f'    mov {TEMP_REG_0}, [rbp - {result_offset}] ; get first result\n')
+
         for index in range(1, self.data_count):
             result_offset += 8
 
@@ -1015,17 +1203,17 @@ class ShiftExpression(ChainExpression):
 
             self.write_asm(f'    push rcx\n')
             self.write_asm(f'    mov rcx, [rbp - {result_offset}]\n')
-            if self.data[index][0] == '<<':
-                self.write_asm(f'    shl r12, cl\n')
-            elif self.data[index][0] == '>>':
-                self.write_asm(f'    shr r12, cl\n')
+            if self.data[index].opt == '<<':
+                self.write_asm(f'    shl {TEMP_REG_0}, cl\n')
+            elif self.data[index].opt == '>>':
+                self.write_asm(f'    shr {TEMP_REG_0}, cl\n')
             else:
                 raise CompilerError(f'wtf')
             self.write_asm(f'    pop rcx\n')
 
         # set result
         if set_result:
-            self.write_asm(f'    mov [rbp - {my_result_offset}], r12 ; ShiftExpression set result\n')
+            self.write_asm(f'    mov [rbp - {my_result_offset}], {TEMP_REG_0} ; ShiftExpression set result\n')
 
 
 class AdditiveExpression(ChainExpression):
@@ -1039,35 +1227,38 @@ class AdditiveExpression(ChainExpression):
     def __repr__(self):
         return f'AdditiveExpression {self.data}'
 
-    def print_me(self, indent):
+    def print_me1(self, indent):
         print(f'{" " * indent}AdditiveExpression')
-        print(f'{" " * (indent + 4)}{self.data}')
+        print(f'{" " * (indent + PRINT_INDENT)}{self.data}')
 
     def get_const_result(self):
         # todo? not consistent with c
         result = self.gen_asm_results[0]['value']
         for index in range(1, self.data_count):
-            if self.data[index][0] == '+':
+            if self.data[index].opt == '+':
                 result += self.gen_asm_results[index]['value']
-            elif self.data[index][0] == '-':
+            elif self.data[index].opt == '-':
                 result -= self.gen_asm_results[index]['value']
 
         return result
 
     def sub_items_gen_asm(self, result_offset, my_result_offset, set_result = True):
+        # first to {TEMP_REG_0}
+        self.write_asm(f'    mov {TEMP_REG_0}, [rbp - {result_offset}] ; get first result\n')
+
         for index in range(1, self.data_count):
             result_offset += 8
 
-            if self.data[index][0] == '+':
-                self.write_asm(f'    add r12, [rbp - {result_offset}]\n')
-            elif self.data[index][0] == '-':
-                self.write_asm(f'    sub r12, [rbp - {result_offset}]\n')
+            if self.data[index].opt == '+':
+                self.write_asm(f'    add {TEMP_REG_0}, [rbp - {result_offset}]\n')
+            elif self.data[index].opt == '-':
+                self.write_asm(f'    sub {TEMP_REG_0}, [rbp - {result_offset}]\n')
             else:
                 raise CompilerError(f'wtf')
 
         # set result
         if set_result:
-            self.write_asm(f'    mov [rbp - {my_result_offset}], r12 ; AdditiveExpression set result\n')
+            self.write_asm(f'    mov [rbp - {my_result_offset}], {TEMP_REG_0} ; AdditiveExpression set result\n')
 
 
 class MultiplicativeExpression(ChainExpression):
@@ -1082,34 +1273,37 @@ class MultiplicativeExpression(ChainExpression):
     def __repr__(self):
         return f'MultiplicativeExpression {self.data}'
 
-    def print_me(self, indent):
+    def print_me1(self, indent):
         print(f'{" " * indent}MultiplicativeExpression')
-        print(f'{" " * (indent + 4)}{self.data}')
+        print(f'{" " * (indent + PRINT_INDENT)}{self.data}')
 
     def get_const_result(self):
         # todo? not consistent with c
         result = self.gen_asm_results[0]['value']
         for index in range(1, self.data_count):
-            if self.data[index][0] == '*':
+            if self.data[index].opt == '*':
                 result *= self.gen_asm_results[index]['value']
-            elif self.data[index][0] == '/':
+            elif self.data[index].opt == '/':
                 result = result // self.gen_asm_results[index]['value']
-            elif self.data[index][0] == '%':
+            elif self.data[index].opt == '%':
                 result = result % self.gen_asm_results[index]['value']
 
         return result
 
     def sub_items_gen_asm(self, result_offset, my_result_offset, set_result = True):
+        # first to {TEMP_REG_0}
+        self.write_asm(f'    mov {TEMP_REG_0}, [rbp - {result_offset}] ; get first result\n')
+
         for index in range(1, self.data_count):
             result_offset += 8
 
             # print_orange(f'MultiplicativeExpression item = {self.data[index]}')
-            if self.data[index][0] == '*':
+            if self.data[index].opt == '*':
                 if self.gen_asm_results[index]['type'] == 'const':
-                    self.write_asm(f'    imul r12, {self.gen_asm_results[index]["value"]}\n')
+                    self.write_asm(f'    imul {TEMP_REG_0}, {self.gen_asm_results[index]["value"]}\n')
                 else:
-                    self.write_asm(f'    imul r12, [rbp - {result_offset}]\n')
-            elif self.data[index][0] == '/':
+                    self.write_asm(f'    imul {TEMP_REG_0}, [rbp - {result_offset}]\n')
+            elif self.data[index].opt == '/':
                 # 32-bit int
                 # edx:eax / dword ptr [rbp - {result_offset}]
                 # quotient in eax, remainder in edx.
@@ -1117,30 +1311,30 @@ class MultiplicativeExpression(ChainExpression):
                 # todo: corner case?
                 self.write_asm(f'    push rdx\n')
                 self.write_asm(f'    push rax\n')
-                self.write_asm(f'    mov rdx, r12 ; set edx\n')
+                self.write_asm(f'    mov rdx, {TEMP_REG_0} ; set edx\n')
                 self.write_asm(f'    shr rdx, 32\n')
-                self.write_asm(f'    mov rax, r12 ; set eax\n')
+                self.write_asm(f'    mov rax, {TEMP_REG_0} ; set eax\n')
                 self.write_asm(f'    and rax, right_32f\n')  # 0xffffffff
                 self.write_asm(f'    div dword ptr [rbp - {result_offset}]\n')
-                self.write_asm(f'    mov r12, rax\n')  # save result to r12
+                self.write_asm(f'    mov {TEMP_REG_0}, rax\n')  # save result to {TEMP_REG_0}
                 self.write_asm(f'    pop rax\n')
                 self.write_asm(f'    pop rdx\n')
-            elif self.data[index][0] == '%':
+            elif self.data[index].opt == '%':
                 # todo: corner case?
                 self.write_asm(f'    push rdx\n')
                 self.write_asm(f'    push rax\n')
-                self.write_asm(f'    mov rdx, r12 ; set edx\n')
+                self.write_asm(f'    mov rdx, {TEMP_REG_0} ; set edx\n')
                 self.write_asm(f'    shr rdx, 32\n')
-                self.write_asm(f'    mov rax, r12 ; set eax\n')
+                self.write_asm(f'    mov rax, {TEMP_REG_0} ; set eax\n')
                 self.write_asm(f'    and rax, right_32f\n')  # 0xffffffff
                 self.write_asm(f'    div dword ptr [rbp - {result_offset}]\n')
-                self.write_asm(f'    mov r12, rdx\n')  # save result to r12
+                self.write_asm(f'    mov {TEMP_REG_0}, rdx\n')  # save result to {TEMP_REG_0}
                 self.write_asm(f'    pop rax\n')
                 self.write_asm(f'    pop rdx\n')
 
         # set result
         if set_result:
-            self.write_asm(f'    mov [rbp - {my_result_offset}], r12 ; MultiplicativeExpression set result\n')
+            self.write_asm(f'    mov [rbp - {my_result_offset}], {TEMP_REG_0} ; MultiplicativeExpression set result\n')
 
 
 class CastExpression(CComponent):
@@ -1151,14 +1345,19 @@ class CastExpression(CComponent):
         super().__init__(compiler)
         self.casts = casts
         self.ue = ue
+        self.opt = None
+
+    def set_opt(self, opt):
+        self.opt = opt
 
     def __repr__(self):
         return f'CastExpression {self.casts, self.ue}'
 
     def print_me(self, indent):
         print(f'{" " * indent}CastExpression')
-        print(f'{" " * (indent + 4)}{self.casts}')
-        print(f'{" " * (indent + 4)}{self.ue}')
+        print(f'{" " * (indent + PRINT_INDENT)}casts = {self.casts}')
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.ue}')
+        self.ue.print_me(indent + PRINT_INDENT)
 
     def gen_asm(self, result_offset, set_result = True):
         print(f'CastExpression gen_asm {result_offset = } scope = {self.compiler.scope}')
@@ -1190,11 +1389,25 @@ class UnaryExpression(CComponent):
 
     def print_me(self, indent):
         print(f'{" " * indent}UnaryExpression')
-        print(f'{" " * (indent + 4)}{self.pe, self.pp, self.ue, self.uo, self.cast, self.sizeof, self.tn}')
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.pe, self.pp, self.ue, self.uo, self.cast, self.sizeof, self.tn}')
+        if self.pe:
+            self.pe.print_me(indent + PRINT_INDENT)
+        elif self.pp:
+            print(f'{" " * (indent + PRINT_INDENT)}{self.pp}')
+            self.ue.print_me(indent + PRINT_INDENT)
+        elif self.uo:
+            print(f'{" " * (indent + PRINT_INDENT)}{self.uo}')
+            self.cast.print_me(indent + PRINT_INDENT)
+        elif self.sizeof:
+            print(f'{" " * (indent + PRINT_INDENT)}sizeof')
+            if self.ue:
+                self.ue.print_me(indent + PRINT_INDENT)
+            else:
+                self.tn.print_me(indent + PRINT_INDENT)
 
     def gen_asm(self, result_offset, set_result = True):
         print(f'UnaryExpression gen_asm {result_offset = } scope = {self.compiler.scope}')
-        self.write_asm(f'    ; UnaryExpression gen_asm\n')
+        self.write_asm(f'    ; UnaryExpression gen_asm {self.uo}\n')
 
         if self.pe:
             return self.pe.gen_asm(result_offset)
@@ -1211,8 +1424,10 @@ class UnaryExpression(CComponent):
                     self.write_asm(f'    dec qword ptr [rbp - {data["offset"]}] ; --\n')
 
                 if set_result:
-                    self.write_asm(f'    mov r14, [rbp - {data["offset"]}]\n')
-                    self.write_asm(f'    mov [rbp - {result_offset}], r14\n')
+                    self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {data["offset"]}]\n')
+                    self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4}\n')
+            elif data['type'] == 'pointer':
+                raise
 
             return data
         elif self.uo:
@@ -1231,16 +1446,61 @@ class UnaryExpression(CComponent):
                     return {'type':'const', 'value':-data['value']}
 
                 return {'type':'mem', 'offset':result_offset}
+            elif self.uo == '&':
+                # get address
+                data = self.cast.gen_asm(result_offset, set_result = False)
 
-            raise CompilerError(f'wtfff')
+                print_red(f'{data}')
 
-        raise CompilerError(f'wtfff2')
+                if data['type'] == 'var':
+                    self.write_asm(f'    mov {TEMP_REG_4}, rbp\n')
+                    self.write_asm(f'    sub {TEMP_REG_4}, {data["offset"]}\n')
+
+                    if set_result:
+                        self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; save address\n')
+
+                    return {'type':'mem', 'offset':result_offset}
+                else:
+                    raise
+            elif self.uo == '*':
+                # indirection. dereferencing.
+
+                data = self.cast.gen_asm(result_offset, set_result = False)
+                print_red(f'dereference. data = {data}')
+                # {'type': 'pointer', 'data_type': 'int', 'name': 'p', 'offset': 16, 'pointer_data': [[], []]}
+                # int **p;
+
+                if data['type'] != 'pointer':
+                    raise CodeError(f'* on non-pointer')
+
+                new_data = copy.deepcopy(data) # do not break original data
+
+                pointer_item = new_data['pointer_data'].pop()
+                if len(new_data['pointer_data']) == 0:
+                    self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {new_data["offset"]}]; dereference. get pointer value\n')
+                    self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4}; dereference. address to temp\n')
+
+                    new_data['type'] = 'de_pointer'
+                    new_data['offset'] = result_offset
+
+                else:
+                    raise
+
+                # print_red(f'after dereferencing. data = {data}')
+                # print_red(f'after dereferencing. new_data = {new_data}')
+
+                return new_data
+
+            else:
+                raise CompilerError(f'unknown unary-operator')
+
+        raise CompilerError(f'UnaryExpression.gen_asm failed')
 
 
 class PostfixExpression(CComponent):
     # primary-expression
-    # postfix-expression [ expression ]
-    # postfix-expression ( argument-expression-list? )
+    # postfix-expression [ expression ] # array index
+    # postfix-expression ( argument-expression-list? ) # function call
     # postfix-expression . identifier
     # postfix-expression -> identifier
     # postfix-expression ++
@@ -1257,8 +1517,9 @@ class PostfixExpression(CComponent):
 
     def print_me(self, indent):
         print(f'{" " * indent}PostfixExpression')
-        print(f'{" " * (indent + 4)}{self.primary}')
-        print(f'{" " * (indent + 4)}{self.data}')
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.primary}')
+        self.primary.print_me(indent + PRINT_INDENT)
+        print(f'{" " * (indent + PRINT_INDENT)}postfix data = {self.data}')
 
     def gen_asm(self, result_offset, set_result = True):
         print(f'PostfixExpression gen_asm {result_offset = } scope = {self.compiler.scope}')
@@ -1280,7 +1541,7 @@ class PostfixExpression(CComponent):
             #     raise CompilerError(f'{self.primary.idf.name} not found')
 
             print_red(f'scope_item = {scope_item}')
-            current_result = scope_item.copy() # {'type':'var', 'offset':scope_item['offset']}
+            current_result = copy.deepcopy(scope_item) # {'type':'var', 'offset':scope_item['offset']}
 
             for item in self.data:
                 if item in ['++', '--']:
@@ -1291,8 +1552,8 @@ class PostfixExpression(CComponent):
                             raise CompilerError(f'post {item} must has result_offset')
 
                         # get original value
-                        self.write_asm(f'    mov r14, [rbp - {scope_item["offset"]}]\n')
-                        self.write_asm(f'    mov [rbp - {result_offset}], r14\n')
+                        self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {scope_item["offset"]}]\n')
+                        self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4}\n')
 
                         current_result = {'type':'mem', 'offset':result_offset}
 
@@ -1309,7 +1570,92 @@ class PostfixExpression(CComponent):
                 elif item[0] == '->':
                     self.write_asm(f'    ; {self.primary.idf.name}->{item[1]}\n')
                 elif item[0] == 'array index':
-                    self.write_asm(f'    ; {self.primary.idf.name}[exp]\n')
+
+                    # stack layout
+                    # a[2][3][4]
+                    # [[[x, x, x, x], [x, x, x, x], [x, x, x, x]], [[x, x, x, x], [x, x, x, x], [x, x, x, x]]]
+
+                    # example
+                    # int arrrrrrr[3][222]
+                    # [[x, x, ...], [x, x, ...], [x, x, ...]]
+                    # current_result = {'type': 'array', 'data_type': 'int', 'name': 'arrrrrrr', 'offset': 5336, 'dim': 2, 'ranks': [3, 222]}
+
+                    # arrrrrrr[exp]
+                    # sub_elements_count = 222
+                    # new_address = rbp - 5336 + exp * sub_elements_count
+                    # -> {'type': 'de_array', 'data_type': 'int', 'name': 'arrrrrrr', 'offset': 5336, 'dim': 1, 'ranks': [222]}
+                    # save new_address to result_offset
+
+                    # print_red(item)
+
+                    if current_result['type'] not in ['array', 'pointer', 'de_array']:
+                        raise CodeError(f'indexing on non array [{current_result}]')
+
+                    if current_result['type'] == 'array':
+                        # set init array address as current_address
+                        self.write_asm(f'    mov {TEMP_REG_4}, rbp ; set init array address\n')
+                        self.write_asm(f'    sub {TEMP_REG_4}, {current_result["offset"]} ; set init array address\n')
+                        self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; set init array address\n')
+
+                    self.write_asm(f'    sub rsp, 8 ; array index. for exp result\n')
+                    offset = self.compiler.add_function_stack_offset(8)
+
+                    exp_data = item[1].gen_asm(offset)
+                    print_red(exp_data)
+
+                    # check exp_data
+                    if exp_data['type'] not in ['var', 'const', 'mem']:
+                        raise CodeError(f'wrong type {exp_data["type"]} as array index')
+
+                    # get array[exp] address
+                    # sub_elements_count is known at compile time by array declaration
+                    sub_elements_count = 1
+                    for rank in current_result['ranks'][1:]:
+                        sub_elements_count *= rank
+
+                    self.write_asm(f'    ; sub_elements_count = {sub_elements_count} is known at compile time by array declaration\n')
+
+                    # new_address = current_address + exp * sub_elements_count * element_size
+
+                    element_size = 8 # 8 for all simple data types for now
+
+                    # exp * sub_elements_count * element_size
+                    self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {offset}] ; get exp result\n')
+                    self.write_asm(f'    imul {TEMP_REG_4}, {sub_elements_count} ; exp * sub_elements_count\n')
+                    self.write_asm(f'    imul {TEMP_REG_4}, {element_size} ; * element_size {element_size}\n')
+
+                    # + rbp
+                    # self.write_asm(f'    add {TEMP_REG_4}, rbp ; + rbp\n')
+
+                    # + current_address
+                    self.write_asm(f'    add {TEMP_REG_4}, [rbp - {result_offset}] ; + current_address\n')
+
+                    # - var offset
+                    # self.write_asm(f'    sub {TEMP_REG_4}, {current_result["offset"]} ; - var offset\n')
+
+                    # save address
+                    # runtime value
+                    self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; save address\n')
+
+                    # case 1: arrrrrrr[3][222] arrrrrrr[1]
+                    # case 2: arrrrrrr[3]      arrrrrrr[1]
+                    if len(current_result['ranks']) >= 1:
+                        # still array
+                        current_result['ranks'] = current_result['ranks'][1:]
+                        current_result['dim'] -= 1
+                    else:
+                        raise CodeError(f'indexing on wrong data')
+                        current_result['ranks'] = []
+                        current_result['dim'] -= 1
+                        # current_result['type'] = 'mem'
+
+                    current_result['type'] = 'de_array'
+
+                    self.write_asm(f'    add rsp, 8 ; array index. free\n')
+                    self.compiler.add_function_stack_offset(-8)
+
+
+
                 elif item[0] == 'function call':
                     # print_red(item)
                     # print_red(item[1])
@@ -1318,10 +1664,10 @@ class PostfixExpression(CComponent):
                     print_yellow(f'arg item = {item}')
                     args_count = len(item[1])
 
-                    # save args count to r15
+                    # save args count to {TEMP_REG_5}
 
                     # stack
-                    #   r15
+                    #   {TEMP_REG_5}
                     #   arg n
                     #   ...
                     #   arg 2
@@ -1336,7 +1682,7 @@ class PostfixExpression(CComponent):
                         abi_storage_args_count = 4
 
                     # alignment
-                    # 1 for r15
+                    # 1 for {TEMP_REG_5}
                     align = ((1 + abi_storage_args_count) * 8 + self.compiler.get_function_stack_offset()) % 16
                     if align not in [0, 8]:
                         raise CompilerError(f'check alignment before call align = {align} not in [0, 8]')
@@ -1345,9 +1691,9 @@ class PostfixExpression(CComponent):
                         self.write_asm(f'    sub rsp, 8 ; padding for function call\n')
                         self.compiler.add_function_stack_offset(8)
 
-                    self.write_asm(f'    push r15 ; save r15\n')
+                    self.write_asm(f'    push {TEMP_REG_5} ; save {TEMP_REG_5}\n')
                     self.compiler.add_function_stack_offset(8)
-                    self.write_asm(f'    mov r15, {args_count}; {args_count = }\n')
+                    self.write_asm(f'    mov {TEMP_REG_5}, {args_count}; {args_count = }\n')
 
                     # space for args
                     self.write_asm(f'    sub rsp, {8 * abi_storage_args_count} ; for function call args\n')
@@ -1357,9 +1703,26 @@ class PostfixExpression(CComponent):
                     self.write_asm(f'    ; last_offset = {last_offset}\n')
 
                     # gen_asm for each arg
-                    for arg in item[1]:
-                        print_red(f'arg = {arg}')
-                        arg.gen_asm(last_offset)
+                    for ae in item[1]:
+                        print_red(f'arg = {ae}')
+                        ae.print_me(0)
+                        ae_data = ae.gen_asm(last_offset)
+
+                        if ae_data['type'] in ['const', 'var', 'mem', 'string', 'pointer']:
+                            pass
+                        elif ae_data['type'] == 'de_pointer':
+                            # get value from address
+                            self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {last_offset}]\n')
+                            self.write_asm(f'    mov {TEMP_REG_3}, [{TEMP_REG_4}]\n')
+                            self.write_asm(f'    mov [rbp - {last_offset}], {TEMP_REG_3}\n')
+                        elif ae_data['type'] == 'de_array':
+                            # get value from address
+                            self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {last_offset}]\n')
+                            self.write_asm(f'    mov {TEMP_REG_3}, [{TEMP_REG_4}]\n')
+                            self.write_asm(f'    mov [rbp - {last_offset}], {TEMP_REG_3}\n')
+                        else:
+                            raise CodeError(f'wrong arg type {ae_data["type"]}')
+
                         last_offset -= 8
 
                     # microsoft abi
@@ -1386,7 +1749,7 @@ class PostfixExpression(CComponent):
                     # clean
                     self.write_asm(f'    add rsp, {8 * abi_storage_args_count} ; clean for function call args\n')
                     self.compiler.add_function_stack_offset(-8 * abi_storage_args_count)
-                    self.write_asm(f'    pop r15 ; recover r15\n')
+                    self.write_asm(f'    pop {TEMP_REG_5} ; recover {TEMP_REG_5}\n')
                     self.compiler.add_function_stack_offset(-8)
 
                     if align != 0:
@@ -1395,6 +1758,9 @@ class PostfixExpression(CComponent):
 
                 else:
                     raise CompilerError(f'unknown postfix data {item}')
+
+            if set_result:
+                pass
 
             # return {'type':'mem', 'offset':result_offset}
             return current_result
@@ -1434,20 +1800,20 @@ class PrimaryExpression(CComponent):
 
     def print_me(self, indent):
         print(f'{" " * indent}PrimaryExpression')
-        # print(f'{" " * (indent + 4)}{self.type}')
-        # print(f'{" " * (indent + 4)}{self.data}')
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.type}')
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.data}')
         if self.idf:
-            print(f'{" " * (indent + 4)}{self.idf}')
+            print(f'{" " * (indent + PRINT_INDENT)}{self.idf}')
         elif self.const:
-            print(f'{" " * (indent + 4)}{self.const}')
+            print(f'{" " * (indent + PRINT_INDENT)}{self.const}')
         elif self.string:
-            print(f'{" " * (indent + 4)}{self.string}')
+            print(f'{" " * (indent + PRINT_INDENT)}{self.string}')
         else:
-            print(f'{" " * (indent + 4)}{self.exp}')
+            print(f'{" " * (indent + PRINT_INDENT)}{self.exp}')
 
     def gen_asm(self, result_offset = None, set_result = True):
         print(f'PrimaryExpression gen_asm {result_offset = } scope = {self.compiler.scope}')
-        # f.write(f'    ; {self.exp}\n')
+        self.write_asm(f'    ; PrimaryExpression gen_asm\n')
         if self.idf:
             # self.write_asm(f'    ; PrimaryExpression get idf {self.idf}\n')
             # return 'idf', self.idf.name
@@ -1459,7 +1825,7 @@ class PrimaryExpression(CComponent):
             print_red(f'{scope_item = }')
 
             if set_result:
-                if scope_item['type'] == 'var':
+                if scope_item['type'] in ['var', 'pointer', 'array']:
                     if 'global' in scope_item:
                         self.write_asm(f'    mov [rbp - {result_offset}], {self.idf.name} ; move var {self.idf.name} to offset {result_offset}\n')
                     else:
@@ -1468,8 +1834,10 @@ class PrimaryExpression(CComponent):
                         self.write_asm(f'    mov [rbp - {result_offset}], rax ; move var {self.idf.name} to offset {result_offset}\n')
                         self.write_asm(f'    pop rax\n')
                 elif scope_item['type'] == 'function':
-                    self.write_asm(f'    lea r14, {scope_item["name"]}\n')
-                    self.write_asm(f'    mov [rbp - {result_offset}], r14 ; move function {self.idf.name} address to offset {result_offset}\n')
+                    self.write_asm(f'    lea {TEMP_REG_4}, {scope_item["name"]}\n')
+                    self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; move function {self.idf.name} address to offset {result_offset}\n')
+                else:
+                    raise CompilerError(f'set unknown type [{scope_item["type"]}] to result')
 
             return scope_item
 
@@ -1533,8 +1901,8 @@ class PrimaryExpression(CComponent):
 
             # return 'string', string_var_name
             if set_result:
-                self.write_asm(f'    lea r14, {string_var_name} ; load string {string_var_name}\n')
-                self.write_asm(f'    mov [rbp - {result_offset}], r14 ; load string {string_var_name}\n')
+                self.write_asm(f'    lea {TEMP_REG_4}, {string_var_name} ; load string {string_var_name}\n')
+                self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; load string {string_var_name}\n')
 
             return {'type':'string', 'name':string_var_name}
         else:
@@ -1555,7 +1923,7 @@ class ExpressionStatement(CComponent):
 
     def print_me(self, indent):
         print(f'{" " * indent}ExpressionStatement')
-        self.exp.print_me(indent + 4)
+        self.exp.print_me(indent + PRINT_INDENT)
 
     def gen_asm(self):
         print(f'ExpressionStatement gen_asm scope = {self.compiler.scope}')
@@ -1660,11 +2028,11 @@ class IterationStatement(CComponent):
 
     def print_me(self, indent):
         print(f'{" " * indent}IterationStatement loop_type = {self.loop_type}')
-        self.declaration.print_me(indent + 4)
-        self.exp_1.print_me(indent + 4)
-        self.exp_2.print_me(indent + 4)
-        self.exp_3.print_me(indent + 4)
-        self.stmt.print_me(indent + 4)
+        self.declaration.print_me(indent + PRINT_INDENT)
+        self.exp_1.print_me(indent + PRINT_INDENT)
+        self.exp_2.print_me(indent + PRINT_INDENT)
+        self.exp_3.print_me(indent + PRINT_INDENT)
+        self.stmt.print_me(indent + PRINT_INDENT)
 
     def gen_asm(self):
         print(f'IterationStatement gen_asm scope = {self.compiler.scope}')
@@ -1801,11 +2169,12 @@ class JumpStatement(CComponent):
     def print_me(self, indent):
         print(f'{" " * indent}JumpStatement')
         if self.cmd == 'goto':
-            print(f'{" " * (indent + 4)}goto {self.idf.name}')
+            print(f'{" " * (indent + PRINT_INDENT)}goto {self.idf.name}')
         elif self.cmd == 'return':
-            print(f'{" " * (indent + 4)}return {self.exp}')
+            # print(f'{" " * (indent + PRINT_INDENT)}return {self.exp}')
+            self.exp.print_me(indent + PRINT_INDENT)
         else:
-            print(f'{" " * (indent + 4)}{self.cmd}')
+            print(f'{" " * (indent + PRINT_INDENT)}{self.cmd}')
 
     def gen_asm(self, my_result_offset = None):
         print(f'JumpStatement gen_asm scope = {self.compiler.scope}')
@@ -1851,10 +2220,10 @@ class InitDeclarator(CComponent):
 
     def print_me(self, indent):
         print(f'{" " * indent}InitDeclarator')
-        # self.dtr.print_me(indent + 4)
-        print(f'{" " * (indent + 4)}dtr = {self.dtr}')
-        # self.init.print_me(indent + 4)
-        print(f'{" " * (indent + 4)}init = {self.init}')
+        # self.dtr.print_me(indent + PRINT_INDENT)
+        print(f'{" " * (indent + PRINT_INDENT)}dtr = {self.dtr}')
+        self.init.print_me(indent + PRINT_INDENT)
+        # print(f'{" " * (indent + PRINT_INDENT)}init = {self.init}')
 
 
 class Constant(CComponent):
@@ -1868,9 +2237,9 @@ class Constant(CComponent):
 
     def print_me(self, indent):
         print(f'{" " * indent}Constant')
-        # self.dtr.print_me(indent + 4)
-        print(f'{" " * (indent + 4)}{self.const}')
-        # self.init.print_me(indent + 4)
+        # self.dtr.print_me(indent + PRINT_INDENT)
+        print(f'{" " * (indent + PRINT_INDENT)}{self.const}')
+        # self.init.print_me(indent + PRINT_INDENT)
 
 
 class Identifier(CComponent):
@@ -1886,6 +2255,6 @@ class Identifier(CComponent):
 
     def print_me(self, indent):
         print(f'{" " * indent}Identifier({self.name})')
-        # self.dtr.print_me(indent + 4)
-        # print(f'{" " * (indent + 4)}{self.name}')
-        # self.init.print_me(indent + 4)
+        # self.dtr.print_me(indent + PRINT_INDENT)
+        # print(f'{" " * (indent + PRINT_INDENT)}{self.name}')
+        # self.init.print_me(indent + PRINT_INDENT)

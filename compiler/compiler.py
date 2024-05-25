@@ -806,7 +806,10 @@ class Compiler:
             self.set_index(save_2)
             break
 
-        return_data = {'type':data_type, 'name':name, 'array_data':array_data}
+        return_data = {'type':data_type, 'name':name}
+        if data_type == 'array':
+            return_data['array_data'] = array_data
+
         self.dbg(f'get_direct_declarator return {return_data}')
         # return dd_type, data
         return return_data
@@ -1055,9 +1058,9 @@ class Compiler:
 
     @go_deep
     def get_declaration_specifiers(self, for_what = None):
-        # storage-class-specifier declaration-specifiers?
-        # type-specifier declaration-specifiers?
-        # type-qualifier declaration-specifiers?
+        # storage-class-specifier declaration-specifiers? # 'auto', 'register', 'static', 'extern', 'typedef'
+        # type-specifier declaration-specifiers? # void int ...
+        # type-qualifier declaration-specifiers? # 'const', 'volatile'
         # function-specifier declaration-specifiers?
         # alignment-specifier declaration-specifiers?
 
@@ -1610,7 +1613,7 @@ class Compiler:
 
         ree = self.get_relational_expression()
         if ree:
-            data = [(None, ree)]
+            data = [ree]
 
             while True:
                 save_2 = self.get_index()
@@ -1618,7 +1621,8 @@ class Compiler:
                 if self.get_a_string('=='):
                     ree = self.get_relational_expression()
                     if ree:
-                        data.append(('==', ree))
+                        ree.set_opt('==')
+                        data.append(ree)
                         continue
 
                 self.set_index(save_2)
@@ -1626,7 +1630,8 @@ class Compiler:
                 if self.get_a_string('!='):
                     ree = self.get_relational_expression()
                     if ree:
-                        data.append(('!=', ree))
+                        ree.set_opt('!=')
+                        data.append(ree)
                         continue
 
                 self.set_index(save_2)
@@ -1652,7 +1657,7 @@ class Compiler:
 
         se = self.get_shift_expression()
         if se:
-            data = [(None, se)]
+            data = [se]
 
             while True:
                 save_2 = self.get_index()
@@ -1660,7 +1665,8 @@ class Compiler:
                 if self.get_a_string('<'):
                     se = self.get_shift_expression()
                     if se:
-                        data.append(('<', se))
+                        se.set_opt('>')
+                        data.append(se)
                         continue
 
                 self.set_index(save_2)
@@ -1668,7 +1674,8 @@ class Compiler:
                 if self.get_a_string('>'):
                     se = self.get_shift_expression()
                     if se:
-                        data.append(('>', se))
+                        se.set_opt('>')
+                        data.append(se)
                         continue
 
                 self.set_index(save_2)
@@ -1676,7 +1683,8 @@ class Compiler:
                 if self.get_a_string('<='):
                     se = self.get_shift_expression()
                     if se:
-                        data.append(('<=', se))
+                        se.set_opt('<=')
+                        data.append(se)
                         continue
 
                 self.set_index(save_2)
@@ -1684,7 +1692,8 @@ class Compiler:
                 if self.get_a_string('>='):
                     se = self.get_shift_expression()
                     if se:
-                        data.append(('>=', se))
+                        se.set_opt('>=')
+                        data.append(se)
                         continue
 
                 self.set_index(save_2)
@@ -1708,7 +1717,7 @@ class Compiler:
 
         ae = self.get_additive_expression()
         if ae:
-            data = [(None, ae)]
+            data = [ae]
 
             while True:
                 save_2 = self.get_index()
@@ -1716,7 +1725,8 @@ class Compiler:
                 if self.get_a_string('<<'):
                     ae = self.get_additive_expression()
                     if ae:
-                        data.append(('<<', ae))
+                        ae.set_opt('<<')
+                        data.append(ae)
                         continue
 
                 self.set_index(save_2)
@@ -1724,7 +1734,8 @@ class Compiler:
                 if self.get_a_string('>>'):
                     ae = self.get_additive_expression()
                     if ae:
-                        data.append(('>>', ae))
+                        ae.set_opt('>>')
+                        data.append(ae)
                         continue
 
                 self.set_index(save_2)
@@ -1748,7 +1759,7 @@ class Compiler:
 
         me = self.get_multiplicative_expression()
         if me:
-            data = [(None, me)]
+            data = [me]
 
             while True:
                 save_2 = self.get_index()
@@ -1756,7 +1767,8 @@ class Compiler:
                 if self.get_a_string('+'):
                     me = self.get_multiplicative_expression()
                     if me:
-                        data.append(('+', me))
+                        me.set_opt('+')
+                        data.append(me)
                         continue
 
                 self.set_index(save_2)
@@ -1764,7 +1776,8 @@ class Compiler:
                 if self.get_a_string('-'):
                     me = self.get_multiplicative_expression()
                     if me:
-                        data.append(('-', me))
+                        me.set_opt('-')
+                        data.append(me)
                         continue
 
                 self.set_index(save_2)
@@ -1789,7 +1802,7 @@ class Compiler:
 
         ce = self.get_cast_expression()
         if ce:
-            data = [(None, ce)] # first
+            data = [ce] # first
 
             while True:
                 save_2 = self.get_index()
@@ -1797,7 +1810,8 @@ class Compiler:
                 if self.get_a_string('*'):
                     ce = self.get_cast_expression()
                     if ce:
-                        data.append(('*', ce))
+                        ce.set_opt('*')
+                        data.append(ce)
                         continue
 
                 self.set_index(save_2)
@@ -1805,7 +1819,8 @@ class Compiler:
                 if self.get_a_string('/'):
                     ce = self.get_cast_expression()
                     if ce:
-                        data.append(('/', ce))
+                        ce.set_opt('/')
+                        data.append(ce)
                         continue
 
                 self.set_index(save_2)
@@ -1813,7 +1828,8 @@ class Compiler:
                 if self.get_a_string('%'):
                     ce = self.get_cast_expression()
                     if ce:
-                        data.append(('%', ce))
+                        ce.set_opt('%')
+                        data.append(ce)
                         continue
 
                 self.set_index(save_2)
@@ -2156,9 +2172,9 @@ class Compiler:
                 self.set_index(save_2)
 
                 if self.get_a_string('('):
-                    ael = self.get_argument_expression_list()
+                    aes = self.get_argument_expression_list()
                     if self.get_a_string(')'):
-                        data.append(('function call', ael))
+                        data.append(('function call', aes))
                         continue
 
                 self.set_index(save_2)
@@ -2456,7 +2472,7 @@ class Compiler:
         idf = self.get_identifier()
         if idf in ['const', 'volatile']:
             self.dbg(f'get_type_qualifier return {idf}')
-            return idf
+            return idf.name
 
         self.set_index(save_1)
         self.dbg(f'get_type_qualifier return comp.NoObject()')
@@ -2623,6 +2639,10 @@ class Compiler:
         # * type-qualifier-list?
         # * type-qualifier-list? pointer
 
+        # * *const *const * * * *
+        # * = [[]]
+        # * *const * = [[], ['const'], []]
+
         self.dbg(f'get_pointer')
         save_1 = self.get_index()
 
@@ -2631,12 +2651,14 @@ class Compiler:
         while True:
             if self.get_a_string('*'):
                 tql = self.get_type_qualifier_list()
-                ptrs.append(('*', tql))
+                if not tql:
+                    tql = []
+                ptrs.append(tql)
                 continue
 
             break
 
-        if len(ptrs) != 0:
+        if True: # len(ptrs) != 0:
             self.dbg(f'get_pointer return {ptrs}')
             return ptrs
 
