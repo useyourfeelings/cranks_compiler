@@ -60,7 +60,7 @@ int f3(){
     printf("result = %d wtf2999阿斯顿999999999999999\n", f2());
 }
 
-
+*/
 int loop1(){
 
     //int arr[2][222];
@@ -114,7 +114,7 @@ int pointer(){
 
     printf("pointer a = %d, p = 0x%x *p = %d\n", a, p, *p);
 }
-*/
+
 
 int array(){
     int a = 10;
@@ -156,6 +156,52 @@ int array(){
     printf("array printf 0x%x\n", b[1][2][3] + b[2][3][4] + 1);
 }
 
+
+struct S1 {
+    int a, ***b;
+    int c, d;
+} s0;
+
+/*
+struct S2 {
+    const int a, ***b;
+    int c;
+} ;
+
+struct S3{
+    S1 aa, bb;
+    int cc;
+};*/
+
+int struct_test(){
+
+    struct S1 s1;
+    s1++;
+    s1.a = 666;
+    s1.d = s1.a + 111;
+    s1.b = s1.d + s1.a;
+
+    int *p = &s1.c;
+    *p = 888 + 1;
+
+    printf("struct_test s1.a = %d s1.b = %d s1.c = %d s1.d = %d \n", s1.a, s1.b, s1.c, s1.d);
+    printf("struct_test &a = 0x%x &b = 0x%x &c = 0x%x &d = 0x%x \n", &s1.a, &s1.b, &s1.c, &s1.d);
+
+    struct S1 sa[10][10];
+    sa[1][2].a = 666;
+    sa[6][2].b = 12445;
+    sa[1][5].c = sa[6][2].b + sa[1][2].a;
+    printf("struct_test %d %d %d %d\n", sa[1][2].a, sa[1][2].b, sa[6][7].a, sa[1][5].c);
+/*
+    for(int i = 0; i < 3; ++ i){
+        for(int j = 0; j < 1; ++ j){
+            printf("loop %d %d\n", i, j);
+        }
+    }
+*/
+
+}
+
 int main(){
     //f2();
     //int v2 = 3;
@@ -163,9 +209,11 @@ int main(){
     array();
     //f3();
 
-    //printf("f1 xc printf \n");
+    struct_test();
 
-    //loop1();
+    //printf("f1 xc printf \n");
+    pointer();
+    loop1();
 
     //printf("xc printf wtf %d %d %s %d %d %d", 1, 22, "wtfffffffffff", 44, 555, 666);
 

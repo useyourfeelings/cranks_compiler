@@ -624,12 +624,19 @@ class Compiler:
     def get_declaration(self):
         # declaration-specifiers init-declarator-list? ;
 
+        # const int              a, b, *p, c = 666     ;
+        # struct S1{int a;}      s1, s2 = {...}        ;
+        # struct S2{int a, b;}                         ;
+        # struct S3              s1, s2                ;
+        # struct {int a, b;}     s1, s2                ;
+
         self.dbg(f'get_declaration')
         save_1 = self.get_index()
 
-        dss = self.get_declaration_specifiers()
+        dss = self.get_declaration_specifiers() # const int ...
         if dss:
-            idl = self.get_init_declarator_list()
+            idl = self.get_init_declarator_list() # a, b, *p, c = 666
+
             if self.get_a_string(';'):
                 declaration = comp.Declaration(self, dss, idl)
                 self.dbg_ok(f'get_declaration return {(dss, idl)}')
@@ -742,7 +749,7 @@ class Compiler:
             name = idf.name
             # self.dbg(f'get_direct_declarator return {idf}')
             # return idf
-        elif False: # not support # else:
+        elif False: # no support # else:
             if self.get_a_string('('):
                 decl = self.get_declarator()
                 if decl:
@@ -1261,7 +1268,7 @@ class Compiler:
                     self.dbg(f'get_type_specifier return {(head, idf, sds)}')
                     return head, idf, sds
             else:
-                su = self.get_struct_or_union_specifier(idf)
+                su = self.get_struct_or_union_specifier(idf.name)
                 if su:
                     return comp.TypeSpecifier(self, su)
 
@@ -1665,7 +1672,7 @@ class Compiler:
                 if self.get_a_string('<'):
                     se = self.get_shift_expression()
                     if se:
-                        se.set_opt('>')
+                        se.set_opt('<')
                         data.append(se)
                         continue
 
@@ -2466,6 +2473,9 @@ class Compiler:
 
     @go_deep
     def get_type_qualifier(self):
+        # const
+        # volatile
+
         self.dbg(f'get_type_qualifier')
         save_1 = self.get_index()
 
@@ -2507,6 +2517,14 @@ class Compiler:
         # struct-or-union identifier? { struct-declaration-list }
         # struct-or-union identifier
 
+        # struct          S1          { int a, b; ... }
+        # struct                      { int a, b; ... }
+        # struct          S2
+
+        # 1. define a full struct. with name that can be used later.
+        # 2. disposable struct. use once.
+        # 3. S2 must exist
+
         self.dbg(f'get_struct_or_union_specifier')
         save_1 = self.get_index()
 
@@ -2519,13 +2537,13 @@ class Compiler:
             if sdl:
                 if self.get_a_string('}'):
                     # ok
-                    self.dbg_ok(f'get_struct_or_union_specifier return {(head, idf, sdl)}')
-                    return comp.StructUnion(self, head, idf, sdl)
+                    self.dbg_ok(f'get_struct_or_union_specifier return {(head, idf.name, sdl)}')
+                    return comp.StructUnion(self, head, idf.name, sdl)
 
         self.set_index(save_2)
         if idf:
-            self.dbg_ok(f'get_struct_or_union_specifier return {(head, idf, comp.NoObject())}')
-            return comp.StructUnion(self, head, idf, comp.NoObject())
+            self.dbg_ok(f'get_struct_or_union_specifier return {(head, idf.name, comp.NoObject())}')
+            return comp.StructUnion(self, head, idf.name, comp.NoObject())
 
         # failed
         self.set_index(save_1)
@@ -2566,7 +2584,7 @@ class Compiler:
         self.dbg(f'get_struct_declaration')
         save_1 = self.get_index()
 
-        sql = self.get_specifier_qualifier_list()
+        sql = self.get_specifier_qualifier_list() # const int ...
         if sql:
             sdl = self.get_struct_declarator_list()
             if sdl:
@@ -2697,16 +2715,23 @@ class Compiler:
         # type-specifier specifier-qualifier-list?
         # type-qualifier specifier-qualifier-list?
 
+        # if no type-specifier, default int.
+
         self.dbg(f'get_specifier_qualifier_list')
         save_1 = self.get_index()
 
         data = []
 
+        ts = None # allow only one ts
+
         while True:
             save_2 = self.get_index()
-            ts = self.get_type_specifier()
-            if ts:
-                data.append(ts)
+            new_ts = self.get_type_specifier()
+            if new_ts:
+                if ts:
+                    raise CodeError(f'more than one type-specifier {new_ts}')
+                data.append(new_ts)
+                ts = new_ts
                 continue
 
             tq = self.get_type_qualifier()
@@ -2716,6 +2741,9 @@ class Compiler:
 
             self.set_index(save_2)
             break
+
+        if ts is None:
+            data.append(comp.TypeSpecifier(self, 'int'))
 
         if len(data) != 0:
             self.dbg(f'get_specifier_qualifier_list return {data}')
