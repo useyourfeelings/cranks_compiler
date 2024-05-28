@@ -12,11 +12,22 @@ import functools
 import subprocess
 # import locale
 import datetime
+import copy
+import pprint
 
 import compiler.component as comp
 import compiler.tool as tool
 from compiler.tool import CompilerError, CodeError
 
+
+class Scope:
+    def __init__(self, outer = {}):
+        self.current = {}
+        self.outer = outer
+        self.variable_stack_size = 0
+
+    def __repr__(self):
+        return f'current = {pprint.pformat(self.current)}\nouter = {pprint.pformat(self.outer)}\nvariable_stack_size = {self.variable_stack_size}'
 
 class Compiler:
     def __init__(self, ml64_path, win_sdk_lib_path):
@@ -24,6 +35,7 @@ class Compiler:
         self.win_sdk_lib_path = win_sdk_lib_path
         self.depth = 0
         self.print_depth = False
+        self.print_parsing = False
         self.saved_index = None
         self.source_file_index = None
         self.source_file_buffer = None
@@ -43,12 +55,30 @@ class Compiler:
 
         self.current_function = None
 
-        self.scope = [{}]  # [[]]
-
         # for label name
         # todo
         self.item_id = 0
 
+        # two set for each scope. current and outer
+
+        # default ({}, {})
+        #     scope A ({A}, {})
+        #         scope B ({B}, {A})
+        #             scope C ({C}, {AB})
+        #                 scope D ({D}, {ABC})
+        #         scope E ({E}, {A})
+
+        self.scopes = [Scope()] # default empty
+
+
+    def enter_scope(self):
+        # combine to new_outer
+        new_outer = copy.deepcopy(self.scopes[-1].outer)
+        new_outer.update(self.scopes[-1].current)
+        self.scopes.append(Scope(new_outer))
+
+    def leave_scope(self):
+        self.scopes.pop()
 
     def add_function_stack_offset(self, offset):
         self.current_function.offset += offset
@@ -86,11 +116,12 @@ class Compiler:
         '''
 
     def dbg(self, text):
-        if self.print_depth:
-            # print(f'\33[38;5;1m[depth = {self.depth:04}]{" " * (self.depth * 2)}{text}')
-            print(f'[depth = {self.depth:04}]{" " * (self.depth * 2)}{text}')
-        else:
-            print(f'{text}')
+        if self.print_parsing:
+            if self.print_depth:
+                # print(f'\33[38;5;1m[depth = {self.depth:04}]{" " * (self.depth * 2)}{text}')
+                print(f'[depth = {self.depth:04}]{" " * (self.depth * 2)}{text}')
+            else:
+                print(f'{text}')
 
     def dbg_ok(self, text):
         if self.print_depth:
@@ -209,7 +240,7 @@ class Compiler:
 
                 break
 
-        self.dbg_ok(f'get_translation_unit return {eds}')
+        self.dbg(f'get_translation_unit return {eds}')
         # return eds
         return comp.TranslationUnit(self, eds)
 
@@ -223,14 +254,14 @@ class Compiler:
 
         fd = self.get_function_definition()
         if fd:
-            self.dbg_ok(f'get_external_declaration return {fd}')
+            self.dbg(f'get_external_declaration return {fd}')
             return fd
 
         self.set_index(save_1)
 
         decl = self.get_declaration()
         if decl:
-            self.dbg_ok(f'get_external_declaration return {decl}')
+            self.dbg(f'get_external_declaration return {decl}')
             return decl
 
         self.set_index(save_1)
@@ -257,12 +288,12 @@ class Compiler:
                     # fd = FunctionDefinition(dss, declarator, dl, cs)
                     # self.dbg_ok(f'get_function_definition return {(dss, declarator, dl, cs)}')
                     fd = comp.FunctionDefinition(self, dss, declarator, cs)
-                    self.dbg_ok(f'get_function_definition return {(dss, declarator, cs)}')
+                    self.dbg(f'get_function_definition return {(dss, declarator, cs)}')
                     # return dss, declarator, dl, cs
                     return fd
 
         self.set_index(save_1)
-        self.dbg_fail(f'get_function_definition return comp.NoObject()')
+        self.dbg(f'get_function_definition return comp.NoObject()')
         return comp.NoObject()
 
     @go_deep
@@ -280,7 +311,7 @@ class Compiler:
                 if decl:
                     decls.append(decl)
                 else:
-                    self.dbg_ok(f'get_declaration_list return {decls}')
+                    self.dbg(f'get_declaration_list return {decls}')
                     return decls
 
         self.set_index(save_1)
@@ -297,7 +328,7 @@ class Compiler:
         if self.get_a_string('{'):
             bil = self.get_block_item_list()
             if self.get_a_string('}'):
-                self.dbg_ok(f'get_compound_statement return {bil}')
+                self.dbg(f'get_compound_statement return {bil}')
                 # return bil
                 return comp.CompoundStatement(self, bil)
 
@@ -369,32 +400,32 @@ class Compiler:
 
         ls = self.get_labeled_statement()
         if ls:
-            self.dbg_ok(f'get_statement return {ls}')
+            self.dbg(f'get_statement return {ls}')
             return ls
 
         cs = self.get_compound_statement()
         if cs:
-            self.dbg_ok(f'get_statement return {cs}')
+            self.dbg(f'get_statement return {cs}')
             return cs
 
         es = self.get_expression_statement()
         if es:
-            self.dbg_ok(f'get_statement return {es}')
+            self.dbg(f'get_statement return {es}')
             return es
 
         ss = self.get_selection_statement()
         if ss:
-            self.dbg_ok(f'get_statement return {ss}')
+            self.dbg(f'get_statement return {ss}')
             return ss
 
         its = self.get_iteration_statement()
         if its:
-            self.dbg_ok(f'get_statement return {its}')
+            self.dbg(f'get_statement return {its}')
             return its
 
         js = self.get_jump_statement()
         if js:
-            self.dbg_ok(f'get_statement return {js}')
+            self.dbg(f'get_statement return {js}')
             return js
 
         self.set_index(save_1)
@@ -555,7 +586,7 @@ class Compiler:
         #     exp = []
 
         if self.get_a_string(';'):
-            self.dbg_ok(f'get_expression_statement return {exp}')
+            self.dbg(f'get_expression_statement return {exp}')
             return comp.ExpressionStatement(self, exp)
 
         # fail
@@ -639,7 +670,7 @@ class Compiler:
 
             if self.get_a_string(';'):
                 declaration = comp.Declaration(self, dss, idl)
-                self.dbg_ok(f'get_declaration return {(dss, idl)}')
+                self.dbg(f'get_declaration return {(dss, idl)}')
                 # return dss, idl
                 return declaration
 
@@ -775,7 +806,7 @@ class Compiler:
                     if data_type == 'function':
                         raise CodeError(f'function decl followed by []')
 
-                    self.dbg_fail(f'ce = {ce}')
+                    self.dbg(f'ce = {ce}')
 
                     # raise  CompilerError(f'ce = {ce}')
 
@@ -2537,12 +2568,12 @@ class Compiler:
             if sdl:
                 if self.get_a_string('}'):
                     # ok
-                    self.dbg_ok(f'get_struct_or_union_specifier return {(head, idf.name, sdl)}')
+                    self.dbg(f'get_struct_or_union_specifier return {(head, idf.name, sdl)}')
                     return comp.StructUnion(self, head, idf.name, sdl)
 
         self.set_index(save_2)
         if idf:
-            self.dbg_ok(f'get_struct_or_union_specifier return {(head, idf.name, comp.NoObject())}')
+            self.dbg(f'get_struct_or_union_specifier return {(head, idf.name, comp.NoObject())}')
             return comp.StructUnion(self, head, idf.name, comp.NoObject())
 
         # failed
@@ -2569,7 +2600,7 @@ class Compiler:
                     sds.append(sd)
                     continue
 
-                self.dbg_ok(f'get_struct_declaration_list return {sds}')
+                self.dbg(f'get_struct_declaration_list return {sds}')
                 return sds
 
         self.set_index(save_1)
@@ -2589,7 +2620,7 @@ class Compiler:
             sdl = self.get_struct_declarator_list()
             if sdl:
                 if self.get_a_string(';'):
-                    self.dbg_ok(f'get_struct_declaration return {(sql, sdl)}')
+                    self.dbg(f'get_struct_declaration return {(sql, sdl)}')
                     return sql, sdl
 
         self.set_index(save_1)
@@ -2994,11 +3025,11 @@ class Compiler:
             os.chdir('./output')
             self.dbg_ok(f'os.getcwd() now = {os.getcwd()}')
 
-            self.dbg(f'compile {source_file_name}')
+            self.dbg_ok(f'compile {source_file_name}')
             file_name = os.path.basename(source_file_name)
-            self.dbg(f'file_name = {file_name}')
+            self.dbg_ok(f'file_name = {file_name}')
             name = os.path.splitext(file_name)[0]
-            self.dbg(f'name = {name}')
+            self.dbg_ok(f'name = {name}')
 
             with open(f'../test_case/{source_file_name}', 'r', encoding = 'utf8') as f:
                 self.source_file_buffer = f.read()
@@ -3013,8 +3044,7 @@ class Compiler:
             tu = self.get_translation_unit()
             self.print_depth = False
 
-            self.dbg(f'\n{tu = }')
-
+            # self.dbg_ok(f'\n{tu = }')
             tu.print_me()
 
             result = self.gen_asm(name, tu)
@@ -3024,9 +3054,9 @@ class Compiler:
                     self.run(name + '.exe')
 
         except CompilerError as e:
-            self.dbg(e)
+            self.dbg_fail(e)
         except CodeError as e:
-            self.dbg(e)
+            self.dbg_fail(e)
 
     def build(self, name):
         # now in output folder

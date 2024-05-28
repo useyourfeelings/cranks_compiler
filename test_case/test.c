@@ -173,6 +173,7 @@ struct S3{
     int cc;
 };*/
 
+
 int struct_test(){
 
     struct S1 s1;
@@ -192,28 +193,65 @@ int struct_test(){
     sa[6][2].b = 12445;
     sa[1][5].c = sa[6][2].b + sa[1][2].a;
     printf("struct_test %d %d %d %d\n", sa[1][2].a, sa[1][2].b, sa[6][7].a, sa[1][5].c);
-/*
+
+
+
+    {
+        struct S1 s1;
+        s1.a = s1.b = s1.c = s1.d = 3 * 5;
+        printf("struct_test s1.a = %d s1.b = %d s1.c = %d s1.d = %d \n", s1.a, s1.b, s1.c, s1.d);
+    }
+    printf("struct_test s1.a = %d s1.b = %d s1.c = %d s1.d = %d \n", s1.a, s1.b, s1.c, s1.d);
+
+
     for(int i = 0; i < 3; ++ i){
-        for(int j = 0; j < 1; ++ j){
+        for(int j = 0; j < 3; ++ j){
             printf("loop %d %d\n", i, j);
         }
     }
-*/
+
 
 }
+int aaa;
+
+void scope(){
+
+
+
+
+    //aaa = 111;
+    printf("scope %d\n", aaa);
+
+    {
+        int a = 222, b= 333;
+        printf("scope %d %d\n", a, b);
+    }
+
+    int c = 444;
+    printf("scope %d\n", c);
+
+    for(int i = 0; i < 3; ++ i){
+        for(int j = 0; j < 3; ++ j){
+            printf("loop %d %d\n", i, j);
+        }
+    }
+}
+
 
 int main(){
     //f2();
     //int v2 = 3;
     //int v1 = 1 + 999 * 5 / v2 * 2 - 1665555555;
-    array();
+    //array();
     //f3();
 
-    struct_test();
 
+
+    struct_test();
+    scope();
     //printf("f1 xc printf \n");
-    pointer();
-    loop1();
+    //pointer();
+    //loop1();
 
     //printf("xc printf wtf %d %d %s %d %d %d", 1, 22, "wtfffffffffff", 44, 555, 666);
 

@@ -37,17 +37,38 @@ class CComponent:
         self.compiler.add_function_stack_offset(-8)
 
     def print_current_scope(self, msg = ''):
-        print(f'{self.__class__.__name__} {msg} scope = ')
-        pprint.pprint(self.compiler.scope[-1], indent = 4)
+        print(f'{self.__class__.__name__} {msg} scope_level = {len(self.compiler.scopes)} scope = ')
+        pprint.pprint(self.compiler.scopes[-1], indent = 4)
 
     def get_scope_item(self, name):
-        return self.compiler.scope[-1].get(name, None)
+        item = self.compiler.scopes[-1].current.get(name, None)
+        if item is None:
+            item = self.compiler.scopes[-1].outer.get(name, None)
+
+        return item
+
+    def add_to_scope(self, item):
+        if item['name'] in self.compiler.scopes[-1].current:
+            raise CodeError(f'[{item["name"]}] already defined')
+
+        self.compiler.scopes[-1].current[item['name']] = item
+
+        if item['type'] in ['var', 'array']:
+            if 'global' not in item:
+                self.compiler.scopes[-1].variable_stack_size += item['size']
 
     def enter_scope(self):
-        self.compiler.scope.append(self.compiler.scope[-1].copy())
+        self.write_asm(f'    ; enter_scope\n')
+        self.compiler.enter_scope()
 
-    def leave_scope(self):
-        self.compiler.scope.pop()
+    def leave_scope(self, free_stack_variables = True):
+        self.write_asm(f'    ; leave_scope\n')
+        if free_stack_variables:
+            data_size = self.compiler.scopes[-1].variable_stack_size
+            if data_size > 0:
+                self.stack_free(data_size, f'leave_scope. free stack variables. size = {data_size}')
+
+        self.compiler.leave_scope()
 
 
 class NoObject:
@@ -145,9 +166,6 @@ class FunctionDefinition(CComponent):
         # for ds in self.dss:
         #     ds.gen_asm(f)
 
-        # add self to current scope, for later use.
-        self.compiler.scope[-1][self.name] = {'name':self.name, 'type':'function'}
-
         # enter function
         self.compiler.current_function = self
 
@@ -155,9 +173,7 @@ class FunctionDefinition(CComponent):
         self.enter_scope()
 
         # add self tp scope(can call self)
-        self.compiler.scope[-1][self.name] = {'name':self.name, 'type':'function'}
-
-        self.print_current_scope()
+        self.add_to_scope({'name':self.name, 'type':'function'})
 
         self.write_asm(f'{self.name} proc ; FunctionDefinition\n')
 
@@ -182,7 +198,11 @@ class FunctionDefinition(CComponent):
 
         self.write_asm(f'{self.name} endp\n\n')
 
-        self.leave_scope()
+        self.leave_scope(free_stack_variables = False) # function will free stack automatically
+
+        # add to scope
+        self.add_to_scope({'name':self.name, 'type':'function'})
+
 
 class Declaration(CComponent):
     # declaration-specifiers init-declarator-list? ;
@@ -222,14 +242,13 @@ class Declaration(CComponent):
             print(f'{" " * (indent + 8)}NoObject()')
 
     def gen_asm(self, global_scope = False):
-        self.print_current_scope()
-
         data_type = self.dss[0].type_data
 
         if isinstance(data_type, StructUnion):
             data_type.gen_struct_data()
 
         # todo: make new name
+        # todo: global init/assignment/array
         if global_scope:
             #if not self.idl: # must struct for me
 
@@ -239,22 +258,19 @@ class Declaration(CComponent):
                         name = item.dtr[1]['name']
                         tp = item.dtr[1]['type']
 
-                        # if name in self.compiler.scope[-1]:
-                        #     raise CodeError(f'[{name}] already defined')
-
                         if tp == 'var':
                             if data_type == 'int':
-                                self.write_asm_data(f'{name} dword 0\n')
-                                self.compiler.scope[-1][name] = {'type':tp, 'name':name, 'data_type':data_type}
+                                self.write_asm_data(f'{name} qword 0\n')
+                                self.add_to_scope({'type':tp, 'name':name, 'data_type':data_type, 'global':1})
                                 continue
                         elif tp == 'array':
                             if data_type == 'int':
-                                self.write_asm_data(f'{name} dword 0\n')
-                                self.compiler.scope[-1][name] = {'type':tp, 'name':name, 'data_type':data_type}
+                                self.write_asm_data(f'{name} qword 0\n')
+                                self.add_to_scope({'type':tp, 'name':name, 'data_type':data_type, 'global':1})
                                 continue
                         elif tp == 'function':
                             self.write_asm_data(f'extern {name}:proc\n')
-                            self.compiler.scope[-1][name] = {'type':tp, 'name':name}
+                            self.add_to_scope({'type':tp, 'name':name})
                             continue
                         else:
                             raise CodeError(f'Declaration unknown type {item.dtr}')
@@ -275,9 +291,6 @@ class Declaration(CComponent):
                         data_size = data_type.size
                         data_type = data_type.name
 
-                    # if name in self.compiler.scope[-1]:
-                    #     raise CodeError(f'[{name}] already defined')
-
                     if tp == 'var':  # declaration
                         # print(item.dtr[1][1])
 
@@ -285,7 +298,7 @@ class Declaration(CComponent):
                         offset = self.compiler.add_function_stack_offset(data_size)
                         self.write_asm(f'    sub rsp, {data_size} ; Declaration var {data_type} {name} offset = {offset}\n')
 
-                        scope_item = {'type':'var', 'data_type':data_type, 'name':name, 'offset':offset}
+                        scope_item = {'type':'var', 'data_type':data_type, 'name':name, 'offset':offset, 'size':data_size}
 
                         if item.dtr[0]:  # pointer
                             scope_item['type'] = 'pointer'
@@ -293,22 +306,21 @@ class Declaration(CComponent):
                             # * = [[]]
                             # * *const * = [[], ['const'], []]
 
-                        # self.compiler.scope[-1].append({'type':self.dss[0].type_data, 'name':item.dtr[1][1][0].name, 'offset':self.compiler.get_function_stack_offset()})
-                        self.compiler.scope[-1][scope_item['name']] = scope_item
+                        self.add_to_scope(scope_item)
 
-                        print_red(f'{name} item.init = {item.init}')
+                        # print_red(f'{name} item.init = {item.init}')
                         if isinstance(item.init, AssignmentExpression):
                             item.init.gen_asm(scope_item['offset'])
 
                     elif tp == 'array':
                         self.write_asm(f'    ; Declaration array {data_type} {name}\n')
 
-                        print_red(f'array data {item.dtr[1]["array_data"]}')
+                        # print_red(f'array data {item.dtr[1]["array_data"]}')
                         array_size = 1
                         ranks = []
 
                         for rank_exp in item.dtr[1]['array_data']['ranks']:
-                            print_red(f'{rank_exp = }')
+                            # print_red(f'{rank_exp = }')
 
                             result_offset = self.stack_alloc(8, f'Declaration array {data_type} {name} for exp')
 
@@ -326,8 +338,8 @@ class Declaration(CComponent):
                         offset = self.compiler.add_function_stack_offset(data_size * array_size)
                         self.write_asm(f'    sub rsp, {data_size * array_size} ; Declaration array {data_type} {name} offset = {offset}\n')
 
-                        scope_item = {'type':'array', 'data_type':data_type, 'name':name, 'offset':offset, 'dim':item.dtr[1]['array_data']['dim'], 'ranks':ranks}
-                        self.compiler.scope[-1][scope_item['name']] = scope_item
+                        scope_item = {'type':'array', 'data_type':data_type, 'size':data_size * array_size, 'name':name, 'offset':offset, 'dim':item.dtr[1]['array_data']['dim'], 'ranks':ranks}
+                        self.add_to_scope(scope_item)
             elif isinstance(data_type, StructUnion):
                 for item in self.idl:
                     name = item.dtr[1]['name']
@@ -459,8 +471,7 @@ class StructUnion(CComponent):
                     if self.get_scope_item(self.name) is not None:
                         raise CodeError(f'[{self.name}] already defined')
 
-                    self.compiler.scope[-1][self.name] = {'type': 'struct', 'name': self.name, 'struct_data':self.members, 'size':self.size}
-
+                    self.add_to_scope({'type': 'struct', 'name': self.name, 'struct_data':self.members, 'size':self.size})
             else: # case 3
                 # find struct type
                 if self.get_scope_item(self.name) is None:
@@ -493,9 +504,13 @@ class CompoundStatement(CComponent):
                 print(f'{" " * (indent + PRINT_INDENT)}{bi}')
 
     def gen_asm(self):
+        self.enter_scope()
+
         for bi in self.bil:
             # Declaration or statement
             bi.gen_asm()
+
+        self.leave_scope(free_stack_variables = True)
 
 
 class Statement(CComponent):
@@ -544,8 +559,6 @@ class LabeledStatement(CComponent):
                 print(f'{" " * (indent + PRINT_INDENT)}{item}')
 
     def gen_asm(self):
-        self.print_current_scope()
-
         if self.data[0] not in ['case', 'default']:
             self.write_asm(f'    {self.data[0].name}:\n')
 
@@ -571,8 +584,6 @@ class Expression(CComponent):
                 print(f'{" " * (indent + PRINT_INDENT)}{ae}')
 
     def gen_asm(self, my_result_offset = None, set_result = True):
-        self.print_current_scope()
-
         result = None
 
         for ae in self.aes:
@@ -605,8 +616,6 @@ class AssignmentExpression(CComponent):
             self.ae.print_me(indent + PRINT_INDENT)
 
     def gen_asm(self, my_result_offset, set_result = True):
-        self.print_current_scope()
-
         if self.ce:
             return self.ce.gen_asm(my_result_offset, set_result)
         else:
@@ -708,8 +717,6 @@ class ConditionalExpression(CComponent):
         self.ce.print_me(indent + PRINT_INDENT)
 
     def gen_asm(self, my_result_offset, set_result = True):
-        self.print_current_scope()
-
         if not self.exp:
             return self.loe.gen_asm(my_result_offset, set_result)
         else:
@@ -757,8 +764,6 @@ class ChainExpression(CComponent):
         pass
 
     def gen_asm(self, my_result_offset, set_result = True):
-        self.print_current_scope(f'{my_result_offset = }')
-
         if self.data_count == 1:
             return self.data[0].gen_asm(my_result_offset, set_result)
 
@@ -1351,7 +1356,6 @@ class CastExpression(CComponent):
         self.ue.print_me(indent + PRINT_INDENT)
 
     def gen_asm(self, result_offset, set_result = True):
-        self.print_current_scope()
         return self.ue.gen_asm(result_offset, set_result)
 
 
@@ -1396,7 +1400,6 @@ class UnaryExpression(CComponent):
                 self.tn.print_me(indent + PRINT_INDENT)
 
     def gen_asm(self, result_offset, set_result = True):
-        self.print_current_scope()
         self.write_asm(f'    ; UnaryExpression gen_asm {self.uo}\n')
 
         if self.pe:
@@ -1518,13 +1521,12 @@ class PostfixExpression(CComponent):
         print(f'{" " * (indent + PRINT_INDENT)}postfix data = {self.data}')
 
     def gen_asm(self, result_offset, set_result = True):
-        self.print_current_scope()
         self.write_asm(f'    ; PostfixExpression gen_asm\n')
 
         if self.primary.idf:
             scope_item = self.primary.gen_asm(result_offset)
 
-            print_red(f'scope_item = {scope_item}')
+            # print_red(f'scope_item = {scope_item}')
             current_result = copy.deepcopy(scope_item) # {'type':'var', 'offset':scope_item['offset']}
 
             for item in self.data:
@@ -1551,8 +1553,9 @@ class PostfixExpression(CComponent):
 
                 elif item[0] == '.':
                     if current_result['type'] in ['var', 'de_array', 'de_pointer']:
-                        print_red(current_result)
-                        print_red(item)
+                        # print_red(current_result)
+                        # print_red(item)
+
                         #if current_result['type'] in ['de_array', 'de_pointer']:
                         #    raise
 
@@ -1673,7 +1676,7 @@ class PostfixExpression(CComponent):
                     # print_red(item[1])
                     # print_red(len(item[1]))
 
-                    print_yellow(f'arg item = {item}')
+                    # print_yellow(f'arg item = {item}')
                     args_count = len(item[1])
 
                     # save args count to {TEMP_REG_5}
@@ -1711,7 +1714,7 @@ class PostfixExpression(CComponent):
 
                     # gen_asm for each arg
                     for ae in item[1]:
-                        print_red(f'arg = {ae}')
+                        # print_red(f'arg = {ae}')
                         ae.print_me(0)
                         ae_data = ae.gen_asm(last_offset)
 
@@ -1808,20 +1811,20 @@ class PrimaryExpression(CComponent):
             print(f'{" " * (indent + PRINT_INDENT)}{self.exp}')
 
     def gen_asm(self, result_offset = None, set_result = True):
-        self.print_current_scope()
         self.write_asm(f'    ; PrimaryExpression gen_asm\n')
         if self.idf:
 
             scope_item = self.get_scope_item(self.idf.name)
             if scope_item is None:
-                raise CodeError(f'{self.idf.name} not found')
+                raise CodeError(f'[{self.idf.name}] not defined')
 
-            print_red(f'{scope_item = }')
+            # print_red(f'{scope_item = }')
 
             if set_result:
                 if scope_item['type'] in ['var', 'pointer', 'array']:
                     if 'global' in scope_item:
-                        self.write_asm(f'    mov [rbp - {result_offset}], {self.idf.name} ; move var {self.idf.name} to result_offset {result_offset}\n')
+                        self.write_asm(f'    mov {TEMP_REG_4}, {self.idf.name} ; move var {self.idf.name}\n')
+                        self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; move var {self.idf.name} to result_offset {result_offset}\n')
                     else:
                         self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {scope_item["offset"]}] ; move var {self.idf.name}\n')
                         self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; move var {self.idf.name} to result_offset {result_offset}\n')
@@ -1910,7 +1913,6 @@ class ExpressionStatement(CComponent):
         self.exp.print_me(indent + PRINT_INDENT)
 
     def gen_asm(self):
-        self.print_current_scope()
         if self.exp:
             result_offset = self.stack_alloc(8, 'ExpressionStatement alloc for exp result')
 
@@ -1945,7 +1947,6 @@ class SelectionStatement(CComponent):
         print(f'{" " * indent}{self.stmt_2}')
 
     def gen_asm(self):
-        print(f'SelectionStatement gen_asm scope = {self.compiler.scope}')
         if not self.switch:
             result_offset = self.stack_alloc(8, 'SelectionStatement for exp result')
 
@@ -2009,8 +2010,9 @@ class IterationStatement(CComponent):
         self.stmt.print_me(indent + PRINT_INDENT)
 
     def gen_asm(self):
-        print(f'IterationStatement gen_asm scope = {self.compiler.scope}')
         self.write_asm(f'\n    ; IterationStatement gen_asm\n')
+
+        self.enter_scope()
 
         if self.loop_type == 0: # while
             '''
@@ -2117,6 +2119,8 @@ class IterationStatement(CComponent):
         else:
             raise
 
+        self.leave_scope(free_stack_variables = True)
+
 
 class JumpStatement(CComponent):
     # goto identifier ;
@@ -2143,8 +2147,6 @@ class JumpStatement(CComponent):
             print(f'{" " * (indent + PRINT_INDENT)}{self.cmd}')
 
     def gen_asm(self, my_result_offset = None):
-        self.print_current_scope()
-
         if self.cmd == 'goto':
             # label must in current function
             self.write_asm(f'    jmp {self.idf.name}\n')
