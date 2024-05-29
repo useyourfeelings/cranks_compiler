@@ -6,7 +6,6 @@
 import sys
 import os
 import io
-# import pprint
 import traceback
 import functools
 import subprocess
@@ -28,6 +27,7 @@ class Scope:
 
     def __repr__(self):
         return f'current = {pprint.pformat(self.current)}\nouter = {pprint.pformat(self.outer)}\nvariable_stack_size = {self.variable_stack_size}'
+
 
 class Compiler:
     def __init__(self, ml64_path, win_sdk_lib_path):
@@ -54,6 +54,7 @@ class Compiler:
         self.default_function_stack_size = 1024
 
         self.current_function = None
+        self.current_lineno = 1
 
         # for label name
         # todo
@@ -102,19 +103,6 @@ class Compiler:
 
         return do_go_deep
 
-        '''
-        def do_go_deep(self):
-            self.depth += 1
-            if self.depth > 100:
-                # self.dbg('fuck depth')
-                # exit(0)
-                raise CompilerError(f'fuck depth [{self.depth}]')
-            ret = func(self)
-            self.depth -= 1
-            return ret
-        return do_go_deep
-        '''
-
     def dbg(self, text):
         if self.print_parsing:
             if self.print_depth:
@@ -151,8 +139,8 @@ class Compiler:
         if self.source_file_index < self.source_file_buffer_len:
             c = self.source_file_buffer[self.source_file_index]
             if c == '\n':
-                self.current_line_no += 1
-                self.dbg(f'{self.current_line_no = }')
+                self.current_lineno += 1
+                self.dbg(f'{self.current_lineno = }')
 
             self.dbg(f'getc return {c = }')
             return c
@@ -190,11 +178,11 @@ class Compiler:
                 self.dbg(f'not c.isspace() {c}')
                 return False
 
-    def save_index(self):
-        self.saved_index = self.source_file_index
+    def save(self):
+        return self.source_file_index, self.current_lineno
 
-    def load_index(self):
-        self.source_file_index = self.saved_index
+    def load(self, save_data):
+        self.source_file_index, self.current_lineno = save_data
 
     def get_index(self):
         return self.source_file_index
@@ -202,15 +190,19 @@ class Compiler:
     def set_index(self, index):
         self.source_file_index = index
 
+    def raise_code_error(self, msg = ''):
+        raise CodeError(f'line {self.current_lineno}: {msg}')
+
+
     @go_deep
     def get_template(self):
         # rule
         self.dbg(f'get_template')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
 
         # fail
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_template return comp.NoObject()')
         return comp.NoObject()
 
@@ -220,12 +212,11 @@ class Compiler:
         # translation-unit external-declaration
 
         self.dbg(f'get_translation_unit')
-        save_1 = self.get_index()
 
         eds = []
 
         while True:
-            save_2 = self.get_index()
+            save_1 = self.save()
 
             ed = self.get_external_declaration()
 
@@ -233,15 +224,16 @@ class Compiler:
                 eds.append(ed)
                 continue
             else:
-                self.set_index(save_2)
+                self.load(save_1)
+
+                self.skip_white()
 
                 if not self.now_all_white():
-                    raise CodeError('get_external_declaration failed')
+                    self.raise_code_error(f'get_external_declaration failed')
 
                 break
 
         self.dbg(f'get_translation_unit return {eds}')
-        # return eds
         return comp.TranslationUnit(self, eds)
 
     @go_deep
@@ -250,21 +242,21 @@ class Compiler:
         # declaration
 
         self.dbg(f'get_external_declaration')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         fd = self.get_function_definition()
         if fd:
             self.dbg(f'get_external_declaration return {fd}')
             return fd
 
-        self.set_index(save_1)
+        self.load(save_1)
 
         decl = self.get_declaration()
         if decl:
             self.dbg(f'get_external_declaration return {decl}')
             return decl
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_external_declaration return comp.NoObject()')
         return comp.NoObject()
 
@@ -276,7 +268,7 @@ class Compiler:
         # declaration-specifiers declarator compound-statement
 
         self.dbg(f'get_function_definition')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         dss = self.get_declaration_specifiers(for_what = 'function_definition')
         if dss:
@@ -285,14 +277,12 @@ class Compiler:
                 # dl = self.get_declaration_list()
                 cs = self.get_compound_statement()
                 if cs:
-                    # fd = FunctionDefinition(dss, declarator, dl, cs)
                     # self.dbg_ok(f'get_function_definition return {(dss, declarator, dl, cs)}')
                     fd = comp.FunctionDefinition(self, dss, declarator, cs)
                     self.dbg(f'get_function_definition return {(dss, declarator, cs)}')
-                    # return dss, declarator, dl, cs
                     return fd
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_function_definition return comp.NoObject()')
         return comp.NoObject()
 
@@ -301,7 +291,7 @@ class Compiler:
         # declaration
         # declaration-list declaration
         self.dbg(f'get_declaration_list')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         decl = self.get_declaration()
         if decl:
@@ -314,7 +304,7 @@ class Compiler:
                     self.dbg(f'get_declaration_list return {decls}')
                     return decls
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_declaration_list return comp.NoObject()')
         return comp.NoObject()
 
@@ -323,7 +313,7 @@ class Compiler:
         # { block-item-list }
 
         self.dbg(f'get_compound_statement')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         if self.get_a_string('{'):
             bil = self.get_block_item_list()
@@ -332,7 +322,7 @@ class Compiler:
                 # return bil
                 return comp.CompoundStatement(self, bil)
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_compound_statement return comp.NoObject()')
         return comp.NoObject()
 
@@ -341,7 +331,7 @@ class Compiler:
         # block-item
         # block-item-list block-item
         self.dbg(f'get_block_item_list')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         bil = []
 
@@ -349,16 +339,16 @@ class Compiler:
         if bi:
             bil = [bi]
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 bi = self.get_block_item()
                 if bi:
                     bil.append(bi)
                 else:
-                    self.set_index(save_2)
+                    self.load(save_2)
                     break
         else:
-            self.set_index(save_1)
+            self.load(save_1)
 
         self.dbg(f'get_block_item_list return {bil}')
         return bil
@@ -368,21 +358,21 @@ class Compiler:
         # declaration
         # statement
         self.dbg(f'get_block_item')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         decl = self.get_declaration()
         if decl:
             self.dbg(f'get_block_item return {decl}')
             return decl
 
-        self.set_index(save_1)
+        self.load(save_1)
 
         stmt = self.get_statement()
         if stmt:
             self.dbg(f'get_block_item return {stmt}')
             return stmt
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_block_item return comp.NoObject()')
         return comp.NoObject()
 
@@ -396,7 +386,7 @@ class Compiler:
         # jump-statement
 
         self.dbg(f'get_statement')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         ls = self.get_labeled_statement()
         if ls:
@@ -428,7 +418,7 @@ class Compiler:
             self.dbg(f'get_statement return {js}')
             return js
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_statement return comp.NoObject()')
         return comp.NoObject()
 
@@ -439,7 +429,7 @@ class Compiler:
         # default : statement
 
         self.dbg(f'get_labeled_statement')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         idf = self.get_identifier()
         if idf:
@@ -464,7 +454,7 @@ class Compiler:
                         self.dbg(f'get_labeled_statement return {"default", stmt}')
                         return comp.LabeledStatement(self, ['default', stmt])
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_labeled_statement return comp.NoObject()')
         return comp.NoObject()
 
@@ -476,7 +466,7 @@ class Compiler:
         # for ( declaration expression? ; expression? ) statement
 
         self.dbg(f'get_iteration_statement')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         idf = self.get_identifier()
         if idf == 'while':
@@ -502,18 +492,18 @@ class Compiler:
                                     return comp.IterationStatement(self, 1, exp_1 = exp, stmt = stmt)
         elif idf == 'for':
             if self.get_a_string('('):
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 exp_1 = comp.NoObject()
 
                 decl = self.get_declaration()
                 if not decl:
-                    self.set_index(save_2)
+                    self.load(save_2)
 
                     exp_1 = self.get_expression()
                     if not self.get_a_string(';'):
                         # fail
-                        self.set_index(save_1)
+                        self.load(save_1)
                         self.dbg(f'get_iteration_statement return comp.NoObject()')
                         return comp.NoObject()
 
@@ -527,7 +517,7 @@ class Compiler:
                             return comp.IterationStatement(self, 2, declaration = decl, exp_1 = exp_1, exp_2 = exp_2, exp_3 = exp_3, stmt = stmt)
 
         # fail
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_iteration_statement return comp.NoObject()')
         return comp.NoObject()
 
@@ -538,7 +528,7 @@ class Compiler:
         # switch ( expression ) statement
 
         self.dbg(f'get_selection_statement')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         idf = self.get_identifier()
         if idf == 'if':
@@ -548,7 +538,7 @@ class Compiler:
                     if self.get_a_string(')'):
                         stmt_1 = self.get_statement()
                         if stmt_1:
-                            save_2 = self.get_index()
+                            save_2 = self.save()
                             idf = self.get_identifier()
                             if idf == 'else':
                                 stmt_2 = self.get_statement()
@@ -556,7 +546,7 @@ class Compiler:
                                     self.dbg(f'get_selection_statement return {("if", exp, stmt_1, "else", stmt_2)}')
                                     return comp.SelectionStatement(self, exp = exp, stmt_1 = stmt_1, stmt_2 = stmt_2)
 
-                            self.set_index(save_2)
+                            self.load(save_2)
                             self.dbg(f'get_selection_statement return {("if", exp, stmt_1)}')
                             return comp.SelectionStatement(self, exp = exp, stmt_1 = stmt_1)
         elif idf == 'switch':
@@ -570,7 +560,7 @@ class Compiler:
                             return comp.SelectionStatement(self, switch = 'switch', exp = exp, stmt_1 = stmt_1)
 
         # fail
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_selection_statement return comp.NoObject()')
         return comp.NoObject()
 
@@ -579,7 +569,7 @@ class Compiler:
         # expression? ;
 
         self.dbg(f'get_expression_statement')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         exp = self.get_expression()
         # if exp is None:
@@ -590,7 +580,7 @@ class Compiler:
             return comp.ExpressionStatement(self, exp)
 
         # fail
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_expression_statement return comp.NoObject()')
         return comp.NoObject()
 
@@ -602,11 +592,11 @@ class Compiler:
         # return expression? ;
 
         self.dbg(f'get_jump_statement')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         idf = self.get_identifier()
 
-        save_2 = self.get_index()
+        save_2 = self.save()
 
         if idf == 'goto':
             idf = self.get_identifier()
@@ -616,7 +606,7 @@ class Compiler:
                     self.dbg(f'get_jump_statement return {("goto", idf)}')
                     return comp.JumpStatement(self, cmd = 'goto', idf = idf)
 
-        self.set_index(save_2)
+        self.load(save_2)
 
         if idf == 'continue':
             c = self.getc_skip_white()
@@ -624,7 +614,7 @@ class Compiler:
                 self.dbg(f'get_jump_statement return {("continue", None)}')
                 return comp.JumpStatement(self, cmd = 'continue')
 
-        self.set_index(save_2)
+        self.load(save_2)
 
         if idf == 'break':
             c = self.getc_skip_white()
@@ -632,7 +622,7 @@ class Compiler:
                 self.dbg(f'get_jump_statement return {("break", None)}')
                 return comp.JumpStatement(self, cmd = 'break')
 
-        self.set_index(save_2)
+        self.load(save_2)
 
         if idf == 'return':
             exp = self.get_expression()
@@ -647,7 +637,7 @@ class Compiler:
                 return comp.JumpStatement(self, cmd = 'return', exp = exp)
 
         # fail
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_jump_statement return comp.NoObject()')
         return comp.NoObject()
 
@@ -662,7 +652,7 @@ class Compiler:
         # struct {int a, b;}     s1, s2                ;
 
         self.dbg(f'get_declaration')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         dss = self.get_declaration_specifiers() # const int ...
         if dss:
@@ -675,7 +665,7 @@ class Compiler:
                 return declaration
 
         # fail
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_declaration return comp.NoObject()')
         return comp.NoObject()
 
@@ -684,14 +674,14 @@ class Compiler:
         # init-declarator
         # init-declarator-list , init-declarator
         self.dbg(f'get_init_declarator_list')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         idt = self.get_init_declarator()
         if idt:
             idts = [idt]
 
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 if self.get_a_string(','):
                     idt = self.get_init_declarator()
@@ -699,13 +689,13 @@ class Compiler:
                         idts.append(idt)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
                 self.dbg(f'get_init_declarator_list return {idts}')
                 return idts
 
         # fail
         self.dbg('get_init_declarator_list return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
     @go_deep
@@ -714,12 +704,12 @@ class Compiler:
         # declarator = initializer
 
         self.dbg(f'get_init_declarator')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         dtr = self.get_declarator()
 
         if dtr:
-            save_2 = self.get_index()
+            save_2 = self.save()
 
             if self.get_a_string('='):
                 init = self.get_initializer()
@@ -727,12 +717,12 @@ class Compiler:
                     self.dbg(f'get_init_declarator return {(dtr, init)}')
                     return comp.InitDeclarator(self, dtr, init)
             else:
-                self.set_index(save_2)
+                self.load(save_2)
                 self.dbg(f'get_init_declarator return {(dtr, None)}')
                 return comp.InitDeclarator(self, dtr, comp.NoObject())
 
         # fail
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_init_declarator return comp.NoObject()')
         return comp.NoObject()
 
@@ -741,7 +731,7 @@ class Compiler:
         # pointer? direct-declarator
 
         self.dbg(f'get_declarator')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         pointer = self.get_pointer()
         if pointer:
@@ -754,7 +744,7 @@ class Compiler:
             self.dbg(f'get_declarator return {(pointer, dd)}')
             return pointer, dd
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_declarator return comp.NoObject()')
         return comp.NoObject()
 
@@ -767,7 +757,7 @@ class Compiler:
         # direct-declarator ( identifier-list? ) # function
 
         self.dbg(f'get_direct_declarator')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         name = ''
         data_type = 'na' # var array function
@@ -796,7 +786,7 @@ class Compiler:
         array_data = {'dim':0, 'ranks':[]}
 
         while True:
-            save_2 = self.get_index()
+            save_2 = self.save()
 
             if self.get_a_string('['):
                 ce = self.get_constant_expression()
@@ -815,7 +805,7 @@ class Compiler:
                     array_data['ranks'].append(ce)
                     continue
 
-            self.set_index(save_2)
+            self.load(save_2)
 
             if self.get_a_string('('):
                 ptl = self.get_parameter_type_list()
@@ -828,7 +818,7 @@ class Compiler:
                         data_type = 'function'
                         continue
 
-            self.set_index(save_2)
+            self.load(save_2)
 
             if self.get_a_string('('):
                 idfs = self.get_identifier_list()
@@ -841,7 +831,7 @@ class Compiler:
                     continue
 
             # all fail
-            self.set_index(save_2)
+            self.load(save_2)
             break
 
         return_data = {'type':data_type, 'name':name}
@@ -857,7 +847,7 @@ class Compiler:
         # identifier
         # identifier-list , identifier
         self.dbg(f'get_identifier_list')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         idfs = []
 
@@ -865,16 +855,16 @@ class Compiler:
         if idf:
             idfs = [idf]
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 idf = self.get_identifier()
                 if idf:
                     idfs.append(idf)
                 else:
-                    self.set_index(save_2)
+                    self.load(save_2)
                     break
         else:
-            self.set_index(save_1)
+            self.load(save_1)
 
         self.dbg(f'get_identifier_list return {idfs}')
         return idfs
@@ -884,21 +874,21 @@ class Compiler:
         # parameter-list
         # parameter-list , ...
         self.dbg(f'get_parameter_type_list')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         pl = self.get_parameter_list()
         if pl:
-            save_2 = self.get_index()
+            save_2 = self.save()
             if self.get_a_string(','):
                 if self.get_a_string('...'):
                     self.dbg(f'get_parameter_type_list return {(pl, "...")}')
                     return pl, "..."
 
-            self.set_index(save_2)
+            self.load(save_2)
             self.dbg(f'get_parameter_type_list return {(pl, None)}')
             return pl, None
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_parameter_type_list return comp.NoObject()')
         return comp.NoObject()
 
@@ -907,14 +897,14 @@ class Compiler:
         # parameter-declaration
         # parameter-list , parameter-declaration
         self.dbg(f'get_parameter_list')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         pd = self.get_parameter_declaration()
         if pd:
             pl = [pd]
 
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 if self.get_a_string(','):
                     pd = self.get_parameter_declaration()
@@ -922,11 +912,11 @@ class Compiler:
                         pl.append(pd)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
                 self.dbg(f'get_parameter_list return {pl}')
                 return pl
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_parameter_list return comp.NoObject()')
         return comp.NoObject()
 
@@ -935,7 +925,7 @@ class Compiler:
         # declaration-specifiers declarator
         # declaration-specifiers abstract-declarator?
         self.dbg(f'get_parameter_declaration')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         dss = self.get_declaration_specifiers()
         if dss:
@@ -948,7 +938,7 @@ class Compiler:
             self.dbg(f'get_parameter_declaration return {(dss, ad)}')
             return dss, ad
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_parameter_declaration return comp.NoObject()')
         return comp.NoObject()
 
@@ -959,32 +949,32 @@ class Compiler:
         # { initializer-list , }
 
         self.dbg(f'get_initializer')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         ae = self.get_assignment_expression()
         if ae:
             self.dbg(f'get_initializer return {ae}')
             return ae
 
-        self.set_index(save_1)
+        self.load(save_1)
 
         if self.get_a_string('{'):
             il = self.get_initializer_list()
             if il:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 if self.get_a_string('}'):
                     self.dbg(f'get_initializer return {il}')
                     return il
 
-                self.set_index(save_2)
+                self.load(save_2)
                 if self.get_a_string(','):
                     if self.get_a_string('}'):
                         self.dbg(f'get_initializer return {il}')
                         return il
 
         # fail
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_initializer return comp.NoObject()')
         return comp.NoObject()
 
@@ -993,36 +983,36 @@ class Compiler:
         # designation? initializer
         # initializer-list , designation? initializer
         self.dbg(f'get_initializer_list')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         dst = self.get_designation()
         if not dst:
-            self.set_index(save_1)
+            self.load(save_1)
 
         init = self.get_initializer()
         if init:
             data = [(dst, init)]
 
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
                 if self.get_a_string(','):
-                    save_3 = self.get_index()
+                    save_3 = self.save()
                     dst = self.get_designation()
                     if not dst:
-                        self.set_index(save_3)
+                        self.load(save_3)
 
                     init = self.get_initializer()
                     if init:
                         data.append((dst, init))
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
                 break
 
             self.dbg(f'get_initializer_list return {data}')
             return data
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_initializer_list return comp.NoObject()')
         return comp.NoObject()
 
@@ -1030,7 +1020,7 @@ class Compiler:
     def get_designation(self):
         # designator-list =
         self.dbg(f'get_designation')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         dstl = self.get_designator_list()
         if dstl:
@@ -1038,7 +1028,7 @@ class Compiler:
                 self.dbg(f'get_designation return {dstl}')
                 return dstl
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_designation return comp.NoObject()')
         return comp.NoObject()
 
@@ -1048,23 +1038,23 @@ class Compiler:
         # designator
         # designator-list designator
         self.dbg(f'get_designator_list')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         dst = self.get_designator()
         if dst:
             dsts = [dst]
 
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
                 dst = self.get_designator()
                 if dst:
                     dsts.append(dst)
                 else:
-                    self.set_index(save_2)
+                    self.load(save_2)
                     self.dbg(f'get_designator return {dsts}')
                     return dsts
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_designator return comp.NoObject()')
         return comp.NoObject()
 
@@ -1073,7 +1063,7 @@ class Compiler:
         # [ constant-expression ]
         # . identifier
         self.dbg(f'get_designator')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         if self.get_a_string('['):
             ce = self.get_constant_expression()
@@ -1082,7 +1072,7 @@ class Compiler:
                     self.dbg(f'get_designator return {ce}')
                     return ce
 
-        self.set_index(save_1)
+        self.load(save_1)
 
         if self.get_a_string('.'):
             idf = self.get_identifier()
@@ -1090,7 +1080,7 @@ class Compiler:
                 self.dbg(f'get_designator return {idf}')
                 return idf
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_designator return comp.NoObject()')
         return comp.NoObject()
 
@@ -1103,7 +1093,7 @@ class Compiler:
         # alignment-specifier declaration-specifiers?
 
         self.dbg(f'get_declaration_specifiers')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         storage_spec = None
         type_spec = None
@@ -1114,14 +1104,14 @@ class Compiler:
         dss = []
 
         while True:
-            save_2 = self.get_index()
+            save_2 = self.save()
 
             ss = self.get_storage_class_specifier()
             if ss:
                 dss.append(('ss', ss))
                 continue
 
-            self.set_index(save_2)
+            self.load(save_2)
 
             ts = self.get_type_specifier(for_what = for_what)
             if ts:
@@ -1132,35 +1122,35 @@ class Compiler:
                 # dss.append(ts)
                 continue
 
-            self.set_index(save_2)
+            self.load(save_2)
 
             tq = self.get_type_qualifier()
             if tq:
                 dss.append(('tq', tq))
                 continue
 
-            self.set_index(save_2)
+            self.load(save_2)
 
             fs = self.get_function_specifier()
             if fs:
                 dss.append(('fs', fs))
                 continue
 
-            self.set_index(save_2)
+            self.load(save_2)
 
             aspec = self.get_alignment_specifier()
             if aspec:
                 dss.append(('aspec', aspec))
                 continue
 
-            self.set_index(save_2)
+            self.load(save_2)
             break
 
         if type_spec is not None: # if len(dss) != 0:
             self.dbg(f'get_declaration_specifiers return {type_spec, dss}')
             return type_spec, dss
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_declaration_specifiers return comp.NoObject()')
         return comp.NoObject()
 
@@ -1174,7 +1164,7 @@ class Compiler:
 
         self.dbg(f'get_declaration_specifiers')
 
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         storage_spec = None
         type_spec = None
@@ -1183,7 +1173,7 @@ class Compiler:
         alignment_spec = None
 
         while True:
-            save_2 = self.get_index()
+            save_2 = self.save()
 
             ss = self.get_storage_class_specifier()
             if ss:
@@ -1193,7 +1183,7 @@ class Compiler:
                 storage_spec = ss
                 continue
 
-            self.set_index(save_2)
+            self.load(save_2)
 
             ts = self.get_type_specifier()
             if ts:
@@ -1203,7 +1193,7 @@ class Compiler:
                 type_spec = ts
                 continue
 
-            self.set_index(save_2)
+            self.load(save_2)
 
             tq = self.get_type_qualifier()
             if tq:
@@ -1213,7 +1203,7 @@ class Compiler:
                 type_qua = tq
                 continue
 
-            self.set_index(save_2)
+            self.load(save_2)
 
             fs = self.get_function_specifier()
             if fs:
@@ -1223,7 +1213,7 @@ class Compiler:
                 function_spec = fs
                 continue
 
-            self.set_index(save_2)
+            self.load(save_2)
 
             aspec = self.get_alignment_specifier()
             if aspec:
@@ -1233,13 +1223,13 @@ class Compiler:
                 alignment_spec = aspec
                 continue
 
-            self.set_index(save_2)
+            self.load(save_2)
             break
 
         if storage_spec or type_spec or type_qua or function_spec or alignment_spec:
             return (storage_spec, type_spec, type_qua, function_spec, alignment_spec)
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_declaration_specifiers return comp.NoObject()')
         return comp.NoObject()
 
@@ -1271,12 +1261,12 @@ class Compiler:
         # enum-specifier
         # typedef-name
         self.dbg(f'get_type_specifier')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         idf = self.get_identifier()
 
         if not idf:
-            self.set_index(save_1)
+            self.load(save_1)
             self.dbg(f'get_type_specifier return comp.NoObject()')
             return comp.NoObject()
 
@@ -1286,7 +1276,7 @@ class Compiler:
 
         if idf.name in ['struct', 'union']:
             if for_what == 'function_definition':
-                self.set_index(save_1)
+                self.load(save_1)
                 self.dbg(f'get_type_specifier return comp.NoObject()')
                 return comp.NoObject()
 
@@ -1318,21 +1308,21 @@ class Compiler:
         if idf.name in self.typedef_names:
             return comp.TypeSpecifier(self, ('typedef', idf))
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_type_specifier return comp.NoObject()')
         return comp.NoObject()
 
     @go_deep
     def get_typedef_name(self):
         self.dbg(f'get_typedef_name')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         idf = self.get_identifier()
         if idf:
             self.dbg(f'get_typedef_name return {idf}')
             return idf
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_typedef_name return comp.NoObject()')
         return comp.NoObject()
 
@@ -1341,11 +1331,11 @@ class Compiler:
         # enum identifier? { enumerator-list }
         # enum identifier
         self.dbg(f'get_enum_specifier')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         idf = self.get_identifier()
 
-        save_2 = self.get_index()
+        save_2 = self.save()
 
         if self.get_a_string('{'):
             el = self.get_enumerator_list()
@@ -1354,13 +1344,13 @@ class Compiler:
                     self.dbg(f'get_enum_specifier return {("enum", idf, el)}')
                     return "enum", idf, el
 
-        self.set_index(save_2)
+        self.load(save_2)
 
         if idf:
             self.dbg(f'get_enum_specifier return {("enum", idf, comp.NoObject())}')
             return "enum", idf, comp.NoObject()
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_enum_specifier return comp.NoObject()')
         return comp.NoObject()
 
@@ -1369,14 +1359,14 @@ class Compiler:
         # enumerator
         # enumerator-list , enumerator
         self.dbg(f'get_enumerator_list')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         etr = self.get_enumerator()
         if etr:
             etrs = [etr]
 
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 if self.get_a_string(','):
                     etr = self.get_enumerator()
@@ -1384,11 +1374,11 @@ class Compiler:
                         etrs.append(etr)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
                 self.dbg(f'get_enumerator_list return {etrs}')
                 return etrs
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_enumerator_list return comp.NoObject()')
         return comp.NoObject()
 
@@ -1397,11 +1387,11 @@ class Compiler:
         # identifier
         # identifier = constant-expression
         self.dbg(f'get_enumerator')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         idf = self.get_identifier()
         if idf:
-            save_2 = self.get_index()
+            save_2 = self.save()
 
             if self.get_a_string('='):
                 ce = self.get_constant_expression()
@@ -1409,11 +1399,11 @@ class Compiler:
                     self.dbg(f'get_enumerator return {(idf, ce)}')
                     return idf, ce
 
-            self.set_index(save_2)
+            self.load(save_2)
             self.dbg(f'get_enumerator return {(idf, comp.NoObject())}')
             return idf, comp.NoObject()
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_enumerator return comp.NoObject()')
         return comp.NoObject()
 
@@ -1437,7 +1427,7 @@ class Compiler:
         # conditional-expression
 
         self.dbg(f'get_constant_expression return comp.NoObject()')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         ce = self.get_conditional_expression()
 
@@ -1445,7 +1435,7 @@ class Compiler:
             self.dbg(f'get_constant_expression return {ce}')
             return ce
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_constant_expression return comp.NoObject()')
         return comp.NoObject()
 
@@ -1456,11 +1446,11 @@ class Compiler:
         # logical-or-expression ? expression : conditional-expression
 
         self.dbg(f'get_conditional_expression')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         loe = self.get_logical_or_expression()
         if loe:
-            save_2 = self.get_index()
+            save_2 = self.save()
             if self.get_a_string('?'):
                 exp = self.get_expression()
                 if exp:
@@ -1471,14 +1461,14 @@ class Compiler:
                             self.dbg(f'get_conditional_expression return {new_ce}')
                             return new_ce
 
-            self.set_index(save_2)
+            self.load(save_2)
             new_ce = comp.ConditionalExpression(self, loe, comp.NoObject(), comp.NoObject())
             self.dbg(f'get_conditional_expression return {new_ce}')
             return new_ce
 
 
         self.dbg(f'get_conditional_expression return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
     @go_deep
@@ -1487,14 +1477,14 @@ class Compiler:
         # logical-or-expression || logical-and-expression
 
         self.dbg(f'get_logical_or_expression')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         lae = self.get_logical_and_expression()
         if lae:
             data = [lae]
 
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 if self.get_a_string('||'):
                     lae = self.get_logical_and_expression()
@@ -1502,14 +1492,14 @@ class Compiler:
                         data.append(lae)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
                 break
 
             self.dbg(f'get_logical_or_expression return {data}')
             return comp.LogicalOrExpression(self, data)
 
         self.dbg(f'get_logical_or_expression return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
     @go_deep
@@ -1518,14 +1508,14 @@ class Compiler:
         # logical-and-expression && inclusive-or-expression
 
         self.dbg(f'get_logical_and_expression')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         ioe = self.get_inclusive_or_expression()
         if ioe:
             data = [ioe]
 
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 if self.get_a_string('&&'):
                     lae = self.get_inclusive_or_expression()
@@ -1533,14 +1523,14 @@ class Compiler:
                         data.append(lae)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
                 break
 
             self.dbg(f'get_logical_and_expression return {data}')
             return comp.LogicalAndExpression(self, data)
 
         self.dbg(f'get_logical_and_expression return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
     @go_deep
@@ -1549,14 +1539,14 @@ class Compiler:
         # inclusive-or-expression | exclusive-or-expression
 
         self.dbg(f'get_inclusive_or_expression')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         eoe = self.get_exclusive_or_expression()
         if eoe:
             data = [eoe]
 
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 if self.get_a_string('|'):
                     lae = self.get_exclusive_or_expression()
@@ -1564,14 +1554,14 @@ class Compiler:
                         data.append(lae)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
                 break
 
             self.dbg(f'get_inclusive_or_expression return {data}')
             return comp.InclusiveOrExpression(self, data)
 
         self.dbg(f'get_inclusive_or_expression return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
     @go_deep
@@ -1580,14 +1570,14 @@ class Compiler:
         # exclusive-or-expression ^ and-expression
 
         self.dbg(f'get_exclusive_or_expression')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         ae = self.get_and_expression()
         if ae:
             data = [ae]
 
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 if self.get_a_string('^'):
                     lae = self.get_and_expression()
@@ -1595,14 +1585,14 @@ class Compiler:
                         data.append(lae)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
                 break
 
             self.dbg(f'get_exclusive_or_expression return {data}')
             return comp.ExclusiveOrExpression(self, data)
 
         self.dbg(f'get_exclusive_or_expression return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
     @go_deep
@@ -1611,33 +1601,36 @@ class Compiler:
         # and-expression & equality-expression
 
         self.dbg(f'get_and_expression')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         ee = self.get_equality_expression()
         if ee:
             data = [ee]
 
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 if self.get_a_string('&'):
+                    save_3 = self.save()
                     if self.getc() in '&=':  # avoid && &=
-                        self.set_index(save_2)
+                        self.load(save_2)
                         break
+
+                    self.load(save_3)
 
                     lae = self.get_equality_expression()
                     if lae:
                         data.append(lae)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
                 break
 
             self.dbg(f'get_and_expression return {data}')
             return comp.AndExpression(self, data)
 
         self.dbg(f'get_and_expression return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
     @go_deep
@@ -1647,14 +1640,14 @@ class Compiler:
         # equality-expression != relational-expression
 
         self.dbg(f'get_equality_expression')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         ree = self.get_relational_expression()
         if ree:
             data = [ree]
 
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 if self.get_a_string('=='):
                     ree = self.get_relational_expression()
@@ -1663,7 +1656,7 @@ class Compiler:
                         data.append(ree)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
 
                 if self.get_a_string('!='):
                     ree = self.get_relational_expression()
@@ -1672,14 +1665,14 @@ class Compiler:
                         data.append(ree)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
                 break
 
             self.dbg(f'get_equality_expression return {data}')
             return comp.EqualityExpression(self, data)
 
         self.dbg(f'get_equality_expression return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
     @go_deep
@@ -1691,14 +1684,14 @@ class Compiler:
         # relational-expression >= shift-expression
 
         self.dbg(f'get_relational_expression')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         se = self.get_shift_expression()
         if se:
             data = [se]
 
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 if self.get_a_string('<'):
                     se = self.get_shift_expression()
@@ -1707,7 +1700,7 @@ class Compiler:
                         data.append(se)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
 
                 if self.get_a_string('>'):
                     se = self.get_shift_expression()
@@ -1716,7 +1709,7 @@ class Compiler:
                         data.append(se)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
 
                 if self.get_a_string('<='):
                     se = self.get_shift_expression()
@@ -1725,7 +1718,7 @@ class Compiler:
                         data.append(se)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
 
                 if self.get_a_string('>='):
                     se = self.get_shift_expression()
@@ -1734,14 +1727,14 @@ class Compiler:
                         data.append(se)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
                 break
 
             self.dbg(f'get_relational_expression return {data}')
             return comp.RelationalExpression(self, data)
 
         self.dbg(f'get_relational_expression return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
     @go_deep
@@ -1751,14 +1744,14 @@ class Compiler:
         # shift-expression >> additive-expression
 
         self.dbg(f'get_shift_expression')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         ae = self.get_additive_expression()
         if ae:
             data = [ae]
 
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 if self.get_a_string('<<'):
                     ae = self.get_additive_expression()
@@ -1767,7 +1760,7 @@ class Compiler:
                         data.append(ae)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
 
                 if self.get_a_string('>>'):
                     ae = self.get_additive_expression()
@@ -1776,14 +1769,14 @@ class Compiler:
                         data.append(ae)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
                 break
 
             self.dbg(f'get_shift_expression return {data}')
             return comp.ShiftExpression(self, data)
 
         self.dbg(f'get_shift_expression return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
     @go_deep
@@ -1793,14 +1786,14 @@ class Compiler:
         # additive-expression - multiplicative-expression
 
         self.dbg(f'get_additive_expression')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         me = self.get_multiplicative_expression()
         if me:
             data = [me]
 
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 if self.get_a_string('+'):
                     me = self.get_multiplicative_expression()
@@ -1809,7 +1802,7 @@ class Compiler:
                         data.append(me)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
 
                 if self.get_a_string('-'):
                     me = self.get_multiplicative_expression()
@@ -1818,14 +1811,14 @@ class Compiler:
                         data.append(me)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
                 break
 
             self.dbg(f'get_additive_expression return {data}')
             return comp.AdditiveExpression(self, data)
 
         self.dbg(f'get_additive_expression return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
     @go_deep
@@ -1836,14 +1829,14 @@ class Compiler:
         # multiplicative-expression % cast-expression
 
         self.dbg(f'get_multiplicative_expression')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         ce = self.get_cast_expression()
         if ce:
             data = [ce] # first
 
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 if self.get_a_string('*'):
                     ce = self.get_cast_expression()
@@ -1852,7 +1845,7 @@ class Compiler:
                         data.append(ce)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
 
                 if self.get_a_string('/'):
                     ce = self.get_cast_expression()
@@ -1861,7 +1854,7 @@ class Compiler:
                         data.append(ce)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
 
                 if self.get_a_string('%'):
                     ce = self.get_cast_expression()
@@ -1870,14 +1863,14 @@ class Compiler:
                         data.append(ce)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
                 break
 
             self.dbg(f'get_multiplicative_expression return {data}')
             return comp.MultiplicativeExpression(self, data)
 
         self.dbg(f'get_multiplicative_expression return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
 
@@ -1887,14 +1880,14 @@ class Compiler:
         # expression , assignment-expression
 
         self.dbg(f'get_expression')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         ae = self.get_assignment_expression()
         if ae:
             aes = [ae]
 
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 if self.get_a_string(','):
                     ae = self.get_assignment_expression()
@@ -1902,7 +1895,7 @@ class Compiler:
                         aes.append(ae)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
                 break
 
             self.dbg(f'get_expression return {aes}')
@@ -1910,7 +1903,7 @@ class Compiler:
 
         # fail
         self.dbg(f'get_expression return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
 
@@ -1922,7 +1915,7 @@ class Compiler:
         # greedy？
 
         self.dbg(f'get_assignment_expression')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         ue = self.get_unary_expression()
         if ue:
@@ -1934,7 +1927,7 @@ class Compiler:
                     self.dbg(f'get_assignment_expression return {ass}')
                     return ass
 
-        self.set_index(save_1)
+        self.load(save_1)
 
         ce = self.get_conditional_expression()
         if ce:
@@ -1942,7 +1935,7 @@ class Compiler:
             self.dbg(f'get_assignment_expression return {ass}')
             return ass
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_assignment_expression return comp.NoObject()')
         return comp.NoObject()
 
@@ -1957,7 +1950,7 @@ class Compiler:
         # sizeof ( type-name )
 
         self.dbg(f'get_unary_expression')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         pe = self.get_postfix_expression()
         if pe:
@@ -1965,7 +1958,7 @@ class Compiler:
             self.dbg(f'get_unary_expression return {new_ue}')
             return new_ue
 
-        self.set_index(save_1)
+        self.load(save_1)
 
         if self.get_a_string('++'):
             ue = self.get_unary_expression()
@@ -1974,7 +1967,7 @@ class Compiler:
                 self.dbg(f'get_unary_expression return {new_ue}')
                 return new_ue
 
-        self.set_index(save_1)
+        self.load(save_1)
 
         if self.get_a_string('--'):
             ue = self.get_unary_expression()
@@ -1983,7 +1976,7 @@ class Compiler:
                 self.dbg(f'get_unary_expression return {new_ue}')
                 return new_ue
 
-        self.set_index(save_1)
+        self.load(save_1)
 
         # cast
         uo = self.get_unary_operator()
@@ -1994,7 +1987,7 @@ class Compiler:
                 self.dbg(f'get_unary_expression return {new_ue}')
                 return new_ue
 
-        self.set_index(save_1)
+        self.load(save_1)
 
         idf = self.get_identifier()
         if idf == 'sizeof':
@@ -2012,7 +2005,7 @@ class Compiler:
                         self.dbg(f'get_unary_expression return {new_ue}')
                         return new_ue
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_unary_expression return comp.NoObject()')
         return comp.NoObject()
 
@@ -2022,27 +2015,30 @@ class Compiler:
         # = *= /= %= += -= <<= >>= &= ^= |=
 
         self.dbg(f'get_assignment_operator')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         ops = ['=', '*=', '/=', '%=', '+=', '-=', '<<=', '>>=', '&=', '^=', '|=']
 
         for op in ops:
-            save_2 = self.get_index()
+            save_2 = self.save()
             if self.get_a_string(op):
                 if op == '=':
+                    save_3 = self.save()
                     # avoid ==
                     if self.getc() == '=':
-                        self.set_index(save_2)
+                        self.load(save_2)
                         continue
+
+                    self.load(save_3)
 
                 self.dbg(f'get_assignment_operator return {op}')
                 return op
             else:
-                self.set_index(save_1)
+                self.load(save_1)
 
         # fail
         self.dbg(f'get_assignment_operator return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
     @go_deep
@@ -2051,12 +2047,12 @@ class Compiler:
         # ( type-name ) cast-expression
 
         self.dbg(f'get_cast_expression')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         casts = []
 
         while True:
-            save_2 = self.get_index()
+            save_2 = self.save()
 
             if self.get_a_string('('):
                 tn = self.get_type_name()
@@ -2065,7 +2061,7 @@ class Compiler:
                         casts.append(tn)
                         continue
 
-            self.set_index(save_2)
+            self.load(save_2)
             ue = self.get_unary_expression()
             if ue:
                 cast = comp.CastExpression(self, casts, ue)
@@ -2076,7 +2072,7 @@ class Compiler:
             break
 
         self.dbg(f'get_cast_expression return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
     @go_deep
@@ -2084,7 +2080,7 @@ class Compiler:
         # specifier-qualifier-list abstract-declarator?
 
         self.dbg(f'get_type_name')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         sql = self.get_specifier_qualifier_list()
         if sql:
@@ -2093,7 +2089,7 @@ class Compiler:
             return sql, ad
 
         self.dbg(f'get_type_name return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
     @go_deep
@@ -2101,7 +2097,7 @@ class Compiler:
         # pointer
         # pointer? direct-abstract-declarator
         self.dbg(f'get_abstract_declarator')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         ptr = self.get_pointer()
         if ptr:
@@ -2113,7 +2109,7 @@ class Compiler:
                 return comp.NoObject(), dad
 
         self.dbg(f'get_abstract_declarator return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
     @go_deep
@@ -2123,7 +2119,7 @@ class Compiler:
         #  direct-abstract-declarator? ( parameter-type-list? )
 
         self.dbg(f'get_direct_abstract_declarator')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         ad = comp.NoObject()
 
@@ -2134,12 +2130,12 @@ class Compiler:
                     pass
                 else:
                     ad = comp.NoObject()
-                    self.set_index(save_1)
+                    self.load(save_1)
 
         data = []
 
         while True:
-            save_2 = self.get_index()
+            save_2 = self.save()
 
             if self.get_a_string('['):
                 ce = self.get_constant_expression()
@@ -2148,7 +2144,7 @@ class Compiler:
                     data.append(('ce', ce))
                     continue
 
-            self.set_index(save_2)
+            self.load(save_2)
 
             if self.get_a_string('('):
                 ptl = self.get_parameter_type_list()
@@ -2157,7 +2153,7 @@ class Compiler:
                     data.append(('ptl', ptl))
                     continue
 
-            self.set_index(save_2)
+            self.load(save_2)
             break
 
         if len(data) != 0:
@@ -2165,7 +2161,7 @@ class Compiler:
             return ad, data
 
         self.dbg(f'get_direct_abstract_declarator return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
     @go_deep
@@ -2191,14 +2187,14 @@ class Compiler:
         # postfix-expression --
 
         self.dbg(f'get_postfix_expression')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         primary = self.get_primary_expression()
         if primary:
             data = []
 
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 if self.get_a_string('['):
                     exp = self.get_expression()
@@ -2207,7 +2203,7 @@ class Compiler:
                             data.append(('array index', exp))
                             continue
 
-                self.set_index(save_2)
+                self.load(save_2)
 
                 if self.get_a_string('('):
                     aes = self.get_argument_expression_list()
@@ -2215,7 +2211,7 @@ class Compiler:
                         data.append(('function call', aes))
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
 
                 if self.get_a_string('.'):
                     idf = self.get_identifier()
@@ -2223,7 +2219,7 @@ class Compiler:
                         data.append(('.', idf))
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
 
                 if self.get_a_string('->'):
                     idf = self.get_identifier()
@@ -2231,25 +2227,25 @@ class Compiler:
                         data.append(('->', idf))
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
 
                 if self.get_a_string('++'):
                     data.append('++')
                     continue
 
-                self.set_index(save_2)
+                self.load(save_2)
 
                 if self.get_a_string('--'):
                     data.append('--')
                     continue
 
-                self.set_index(save_2)
+                self.load(save_2)
                 break
 
             self.dbg(f'get_postfix_expression return {(primary, data)}')
             return comp.PostfixExpression(self, primary, data)
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_postfix_expression return comp.NoObject()')
         return comp.NoObject()
 
@@ -2259,14 +2255,14 @@ class Compiler:
         # argument-expression-list , assignment-expression
 
         self.dbg(f'get_argument_expression_list')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         ae = self.get_assignment_expression()
         if ae:
             aes = [ae]
 
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 if self.get_a_string(','):
                     ae = self.get_assignment_expression()
@@ -2274,14 +2270,14 @@ class Compiler:
                         aes.append(ae)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
                 break
 
             self.dbg(f'get_argument_expression_list return {aes}')
             return aes
 
         self.dbg(f'get_argument_expression_list return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         # return comp.NoObject()
         return []
 
@@ -2294,28 +2290,28 @@ class Compiler:
 
         self.dbg(f'get_primary_expression')
 
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         idf = self.get_identifier()
         if idf and idf.name not in self.keywords:
             self.dbg(f'get_primary_expression return {idf}')
             return comp.PrimaryExpression(self, idf = idf)
 
-        self.set_index(save_1)
+        self.load(save_1)
 
         const = self.get_constant()
         if const:
             self.dbg(f'get_primary_expression return {const}')
             return comp.PrimaryExpression(self, const = const)
 
-        self.set_index(save_1)
+        self.load(save_1)
 
         string = self.get_string_literal()
         if string:
             self.dbg(f'get_primary_expression return {string}')
             return comp.PrimaryExpression(self, string = string)
 
-        self.set_index(save_1)
+        self.load(save_1)
 
         if self.get_a_string('('):
             exp = self.get_expression()
@@ -2325,14 +2321,14 @@ class Compiler:
                     return comp.PrimaryExpression(self, exp = exp)
 
         self.dbg(f'get_primary_expression return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
     @go_deep
     def get_string_literal(self):
         # encoding-prefix? " s-char-sequence? "
         self.dbg(f'get_string_literal')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         if self.get_a_string('"'):
             string = ''
@@ -2349,7 +2345,7 @@ class Compiler:
                     string += c
 
         self.dbg(f'get_string_literal return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
     @go_deep
@@ -2360,7 +2356,7 @@ class Compiler:
         # enumeration-constant
 
         self.dbg(f'get_constant')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         ic = self.get_integer_constant()
         if ic:
@@ -2368,7 +2364,7 @@ class Compiler:
             return ic
 
         self.dbg(f'get_constant return comp.NoObject()')
-        self.set_index(save_1)
+        self.load(save_1)
         return comp.NoObject()
 
     @go_deep
@@ -2378,7 +2374,7 @@ class Compiler:
         # hexadecimal-constant integer-suffix?
 
         self.dbg(f'get_integer_constant')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         dc = self.get_decimal_constant()
         if dc:
@@ -2396,7 +2392,7 @@ class Compiler:
             self.dbg(f'get_integer_constant {oc}')
             return comp.Constant(self, 'int', int(oc, 8))
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_integer_constant return comp.NoObject()')
         return comp.NoObject()
 
@@ -2406,10 +2402,10 @@ class Compiler:
         # hexadecimal-constant hexadecimal-digit
 
         self.dbg(f'get_hexadecimal_constant')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         if not self.get_a_string('0x') and not self.get_a_string('0X'):
-            self.set_index(save_1)
+            self.load(save_1)
             self.dbg(f'get_hexadecimal_constant return comp.NoObject()')
             return comp.NoObject()
 
@@ -2430,7 +2426,7 @@ class Compiler:
                 # return int(string, 8)
                 return string
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_hexadecimal_constant return comp.NoObject()')
         return comp.NoObject()
 
@@ -2440,7 +2436,7 @@ class Compiler:
         # octal-constant octal-digit
 
         self.dbg(f'get_octal_constant')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         c = self.getc_skip_white()
         if c == '0':
@@ -2461,7 +2457,7 @@ class Compiler:
                     # return int(string, 8)
                     return string
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_octal_constant return comp.NoObject()')
         return comp.NoObject()
 
@@ -2471,7 +2467,7 @@ class Compiler:
         # decimal-constant digit
 
         self.dbg(f'get_decimal_constant')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         c = self.getc_skip_white()
         if c.isdigit() and c != '0':
@@ -2492,7 +2488,7 @@ class Compiler:
                     self.dbg(f'get_decimal_constant return {string}')
                     return string
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_decimal_constant return comp.NoObject()')
         return comp.NoObject()
 
@@ -2508,14 +2504,14 @@ class Compiler:
         # volatile
 
         self.dbg(f'get_type_qualifier')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         idf = self.get_identifier()
         if idf in ['const', 'volatile']:
             self.dbg(f'get_type_qualifier return {idf}')
             return idf.name
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_type_qualifier return comp.NoObject()')
         return comp.NoObject()
 
@@ -2525,7 +2521,7 @@ class Compiler:
         # type-qualifier-list type-qualifier
 
         self.dbg(f'get_type_qualifier_list')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         tq = self.get_type_qualifier()
         if tq:
@@ -2539,7 +2535,7 @@ class Compiler:
                     self.dbg(f'get_type_qualifier_list return {data}')
                     return data
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_type_qualifier_list return comp.NoObject()')
         return comp.NoObject()
 
@@ -2557,11 +2553,11 @@ class Compiler:
         # 3. S2 must exist
 
         self.dbg(f'get_struct_or_union_specifier')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         idf = self.get_identifier()
 
-        save_2 = self.get_index()
+        save_2 = self.save()
 
         if self.get_a_string('{'):
             sdl = self.get_struct_declaration_list()
@@ -2571,13 +2567,13 @@ class Compiler:
                     self.dbg(f'get_struct_or_union_specifier return {(head, idf.name, sdl)}')
                     return comp.StructUnion(self, head, idf.name, sdl)
 
-        self.set_index(save_2)
+        self.load(save_2)
         if idf:
             self.dbg(f'get_struct_or_union_specifier return {(head, idf.name, comp.NoObject())}')
             return comp.StructUnion(self, head, idf.name, comp.NoObject())
 
         # failed
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_struct_or_union_specifier return comp.NoObject()')
         return comp.NoObject()
 
@@ -2588,7 +2584,7 @@ class Compiler:
         # struct-declaration-list struct-declaration
 
         self.dbg(f'get_struct_declaration_list')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         sd = self.get_struct_declaration()
         if sd:
@@ -2603,7 +2599,7 @@ class Compiler:
                 self.dbg(f'get_struct_declaration_list return {sds}')
                 return sds
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_struct_declaration_list return comp.NoObject()')
         return comp.NoObject()
 
@@ -2613,7 +2609,7 @@ class Compiler:
         # specifier-qualifier-list struct-declarator-list ;
 
         self.dbg(f'get_struct_declaration')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         sql = self.get_specifier_qualifier_list() # const int ...
         if sql:
@@ -2623,7 +2619,7 @@ class Compiler:
                     self.dbg(f'get_struct_declaration return {(sql, sdl)}')
                     return sql, sdl
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_struct_declaration return comp.NoObject()')
         return comp.NoObject()
 
@@ -2632,14 +2628,14 @@ class Compiler:
         # struct-declarator
         # struct-declarator-list , struct-declarator
         self.dbg(f'get_struct_declarator_list')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         sd = self.get_struct_declarator()
         if sd:
             sds = [sd]
 
             while True:
-                save_2 = self.get_index()
+                save_2 = self.save()
 
                 if self.get_a_string(','):
                     sd = self.get_struct_declarator()
@@ -2647,11 +2643,11 @@ class Compiler:
                         sds.append(sd)
                         continue
 
-                self.set_index(save_2)
+                self.load(save_2)
                 self.dbg(f'get_struct_declarator_list return {sds}')
                 return sds
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_struct_declarator_list return comp.NoObject()')
         return comp.NoObject()
 
@@ -2660,24 +2656,24 @@ class Compiler:
         # declarator
         # declarator? : constant-expression
         self.dbg(f'get_struct_declarator')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         dect = self.get_declarator()
 
-        save_2 = self.get_index()
+        save_2 = self.save()
         if self.get_a_string(':'):
             ce = self.get_constant_expression()
             if ce:
                 self.dbg(f'get_struct_declarator return {(dect, ce)}')
                 return dect, ce
 
-        self.set_index(save_2)
+        self.load(save_2)
 
         if dect:
             self.dbg(f'get_struct_declarator return {(dect, None)}')
             return dect, None
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_struct_declarator return comp.NoObject()')
         return comp.NoObject()
 
@@ -2693,7 +2689,7 @@ class Compiler:
         # * *const * = [[], ['const'], []]
 
         self.dbg(f'get_pointer')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         ptrs = []
 
@@ -2711,14 +2707,14 @@ class Compiler:
             self.dbg(f'get_pointer return {ptrs}')
             return ptrs
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_pointer return comp.NoObject()')
         return comp.NoObject()
 
         #####
 
         if not self.get_a_string('*'):
-            self.set_index(save_1)
+            self.load(save_1)
             self.dbg(f'get_pointer return comp.NoObject()')
             return comp.NoObject()
 
@@ -2730,14 +2726,14 @@ class Compiler:
             else:
                 break
 
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         pointer = self.get_pointer()
         if pointer:
             self.dbg(f'get_pointer return True')
             return True
         else:
-            self.set_index(save_1)
+            self.load(save_1)
             self.dbg(f'get_pointer return comp.NoObject()')
             return comp.NoObject()
 
@@ -2749,14 +2745,14 @@ class Compiler:
         # if no type-specifier, default int.
 
         self.dbg(f'get_specifier_qualifier_list')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         data = []
 
         ts = None # allow only one ts
 
         while True:
-            save_2 = self.get_index()
+            save_2 = self.save()
             new_ts = self.get_type_specifier()
             if new_ts:
                 if ts:
@@ -2770,7 +2766,7 @@ class Compiler:
                 data.append(tq)
                 continue
 
-            self.set_index(save_2)
+            self.load(save_2)
             break
 
         if ts is None:
@@ -2780,7 +2776,7 @@ class Compiler:
             self.dbg(f'get_specifier_qualifier_list return {data}')
             return data
 
-        self.set_index(save_1)
+        self.load(save_1)
         self.dbg(f'get_specifier_qualifier_list return comp.NoObject()')
         return comp.NoObject()
 
@@ -2799,13 +2795,13 @@ class Compiler:
         self.dbg(f'get_identifier')
         self.skip_white()
 
-        # save_1 = self.get_index()
+        # save_1 = self.save()
 
         c = self.get_identifier_nondigit() # get a nondigit
 
         if c is None:
             self.dbg(f'get_identifier return comp.NoObject()')
-            # self.set_index(save_1)
+            # self.load(save_1)
             return comp.NoObject()
         else:
             idf = c
@@ -2830,7 +2826,7 @@ class Compiler:
 
     def get_a_string(self, string:str, skip_white = True, tail_white = False):
         self.dbg(f'get_a_string {string}')
-        save_1 = self.get_index()
+        save_1 = self.save()
 
         if skip_white:
             self.skip_white()
@@ -2838,12 +2834,12 @@ class Compiler:
         for c in string:
             self.source_file_index += 1
             if self.source_file_index >= self.source_file_buffer_len:
-                self.set_index(save_1)
+                self.load(save_1)
                 self.dbg(f'get_a_string {string} return False')
                 return False
 
             if c != self.source_file_buffer[self.source_file_index]:
-                self.set_index(save_1)
+                self.load(save_1)
                 self.dbg(f'get_a_string {string} return False')
                 return False
 
@@ -2878,7 +2874,7 @@ class Compiler:
             return c
 
         if c == '\n':
-            self.current_line_no -= 1
+            self.current_lineno -= 1
 
         self.source_file_index -= 1
         return None
@@ -3039,7 +3035,7 @@ class Compiler:
 
             self.source_file_index = -1
 
-            self.current_line_no = 1
+            self.current_lineno = 1
             self.print_depth = True
             tu = self.get_translation_unit()
             self.print_depth = False
@@ -3056,6 +3052,7 @@ class Compiler:
         except CompilerError as e:
             self.dbg_fail(e)
         except CodeError as e:
+            traceback.print_exc()
             self.dbg_fail(e)
 
     def build(self, name):

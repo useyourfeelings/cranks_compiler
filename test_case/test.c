@@ -1,4 +1,4 @@
-int a = 6, b, cc[6]/*, gg[6]*/;
+//int a = 6, b, cc[6]/*, gg[6]*/;
 /*
 struct SSS{
     int s1;
@@ -61,6 +61,9 @@ int f3(){
 }
 
 */
+
+
+/*
 int loop1(){
 
     //int arr[2][222];
@@ -101,16 +104,18 @@ int pointer(){
 
     int * p;// = 2;
 
+
     a = 2222;
+    int aa = 6666;
 
     //printf("pointer a = %d\n", a);
 
     p = &a;
     printf("pointer a = %d, p = 0x%x\n", a, p);
 
-    int *b = &a;
+    int *b = &aa;
 
-    *p =  2* *b;
+    *p =   *b -1234;
 
     printf("pointer a = %d, p = 0x%x *p = %d\n", a, p, *p);
 }
@@ -154,27 +159,19 @@ int array(){
 
     printf("array printf 0x%x 0x%x\n", a, 2*(1+a));
     printf("array printf 0x%x\n", b[1][2][3] + b[2][3][4] + 1);
-}
+}*/
 
+
+int wtf1;
 
 struct S1 {
     int a, ***b;
     int c, d;
-} s0;
-
-/*
-struct S2 {
-    const int a, ***b;
-    int c;
-} ;
-
-struct S3{
-    S1 aa, bb;
-    int cc;
-};*/
+} s0, saaaaa[10][10];
 
 
 int struct_test(){
+
 
     struct S1 s1;
     s1++;
@@ -210,17 +207,29 @@ int struct_test(){
         }
     }
 
+    s0.a =1;
+    s0.d =1*9+1111;
+    printf("s0 %d %d %d\n", s0.a, s0.c, s0.d);
+    saaaaa[0][1].a = 111;
+    saaaaa[9][9].d = 222;
+    printf("saaaaa %d %d\n", saaaaa[0][1].a, saaaaa[9][9].d);
 
 }
-int aaa;
+
+const int aaa =888;
+int bbb = aaa * 2;
+int ccc[666];
+
 
 void scope(){
+    bbb = 123;
 
+    ccc[122] = 789;
 
-
+    ccc[665] = ccc[122] + 1;
 
     //aaa = 111;
-    printf("scope %d\n", aaa);
+    printf("scope %d %d %d %d\n", aaa, bbb, ccc[122], ccc[665]);
 
     {
         int a = 222, b= 333;
