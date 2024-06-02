@@ -489,7 +489,8 @@ class StructUnion(CComponent):
                 offset = 0
 
                 for decl in self.decls:
-                    print_red(decl) # (['const', TypeSpecifier float], [(([], {'type': 'var', 'name': 'a'}), None), (([[], [], []], {'type': 'var', 'name': 'b'}), None)])
+                    print_red(decl)
+                    # (['const', TypeSpecifier float], [(([], {'type': 'var', 'name': 'a'}), None), (([[], [], []], {'type': 'var', 'name': 'b'}), None)])
 
                     ts = None
 
@@ -497,26 +498,96 @@ class StructUnion(CComponent):
                         if isinstance(item, TypeSpecifier):
                             if item.type_data in ['int']:
                                 ts = item.type_data
+                            elif isinstance(item.type_data, StructUnion):
+                                # find struct
+                                struct = self.get_scope_item(item.type_data.name)
+                                if struct is None:
+                                    self.raise_code_error(f'[{item.type_data.name}] not found')
+
+                                # not struct
+                                if struct['type'] != 'struct':
+                                    self.raise_code_error(f'[{item.type_data.name}] is not struct')
+                                #print_red(struct)
+                                print_red(f'item = {item}')
+                                #raise
+                                ts = struct
                             else:
                                 self.raise_code_error(f'no support for type [{item.type_data}]')
 
                     for item in decl[1]:
                         print_red(item) # (([], {'type': 'var', 'name': 'a'}), None)
 
+                        array_size = 1
+                        ranks = []
+                        dim = 0
+                        if item[0][1]['type'] == 'array':
+                            dim = item[0][1]['array_data']['dim']
+                            for rank_exp in item[0][1]['array_data']['ranks']:
+                                # print_red(f'{rank_exp = }')
+
+                                result = rank_exp.gen_asm(None, set_result = False, need_global_const = True)
+                                if result['type'] != 'const':
+                                    self.raise_code_error(f'array rank must be const')
+
+                                array_size *= result['value']
+                                ranks.append(result['value'])
+
                         name = item[0][1]['name']
 
                         # c struct has no initializer(default value)
                         # take ([], {'type': 'var', 'name': 'a'})
 
+                        # print_red(f'ts = {ts}')
+                        # print_red(f'item = {item}')
+
                         if ts in ['int']:
                             member_data = copy.deepcopy(item[0][1])
+                            member_data['data_type'] = ts
                             member_data['pointer_data'] = copy.deepcopy(item[0][0])
                             member_data['offset'] = offset
 
+                            if item[0][1]['type'] == 'array':
+                                member_data['size'] = 8 * array_size
+                                member_data['ranks'] = ranks
+                                member_data['dim'] = dim
+                                member_data.pop('array_data')
+                            else:
+                                member_data['size'] = 8
+
                             self.members[name] = member_data
 
-                            offset += 8
+                            offset += member_data['size']
+                        elif isinstance(ts, dict):
+                            # struct
+
+                            """
+                            ts = {'type': 'struct', 
+                                'name': 'S1', 
+                                'struct_data': {'a': {'type': 'var', 'name': 'a', 'pointer_data': [], 'offset': 0}, 
+                                                'b': {'type': 'var', 'name': 'b', 'pointer_data': [[], [], []], 'offset': 8}, 
+                                                'c': {'type': 'var', 'name': 'c', 'pointer_data': [], 'offset': 16}, 
+                                                'd': {'type': 'var', 'name': 'd', 'pointer_data': [], 'offset': 24}}, 
+                                'size': 32}
+                            """
+
+                            member_data = copy.deepcopy(item[0][1])
+                            member_data['data_type'] = ts['name']
+                            member_data['pointer_data'] = copy.deepcopy(item[0][0])
+                            member_data['offset'] = offset
+
+                            if item[0][1]['type'] == 'array':
+                                member_data['size'] = ts['size'] * array_size
+                                member_data['ranks'] = ranks
+                                member_data['dim'] = dim
+                                member_data.pop('array_data')
+                            else:
+                                member_data['size'] = ts['size']
+
+                            self.members[name] = member_data
+
+                            offset += member_data['size']
                         else:
+                            print_red(ts)
                             self.raise_code_error(f'no support for type [{ts}]')
 
                 self.size = offset
@@ -674,19 +745,10 @@ class AssignmentExpression(CComponent):
         if self.ce:
             return self.ce.gen_asm(my_result_offset, set_result, need_global_const = need_global_const)
         else:
-            ue_data = self.ue.gen_asm(my_result_offset)
-            print_red(ue_data)
+            left_data = self.ue.gen_asm(my_result_offset)
+            print_red(left_data)
 
-            if False: # ue_data['type'] in ['var', 'pointer']:
-                # '=', '*=', '/=', '%=', '+=', '-=', '<<=', '>>=', '&=', '^=', '|='
-                if self.opt == '=':
-                    # a = xxx
-                    self.ae.gen_asm(ue_data['offset'])
-
-                    return ue_data
-                else:
-                    self.raise_code_error(f'no support')
-            elif ue_data['type'] in ['var', 'pointer', 'de_pointer', 'de_array', 'member']:
+            if left_data['type'] in ['var', 'pointer', 'de_pointer', 'de_array', 'member']:
                 # case 1: *p = 123;
                 # case 2: abc = *p;
                 # a = *b = *c
@@ -695,19 +757,19 @@ class AssignmentExpression(CComponent):
                 if self.opt == '=':
                     offset = self.stack_alloc(8, 'for AssignmentExpression')
 
-                    ae_data = self.ae.gen_asm(offset)
-                    # print_red(ae_data)
+                    right_data = self.ae.gen_asm(offset)
+                    # print_red(right_data)
 
-                    # ae_data to address
-                    if ae_data['type'] in ['de_pointer', 'de_array', 'member']:
-                        if ue_data['type'] in ['var', 'pointer']:
+                    # right_data to address
+                    if right_data['type'] in ['de_pointer', 'de_array', 'member']:
+                        if left_data['type'] in ['var', 'pointer']:
                             # a = *b
                             # p = b[1]
                             self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {offset}]\n')
                             self.write_asm(f'    mov {TEMP_REG_3}, [{TEMP_REG_4}]\n')
                             self.write_asm(f'    mov [rbp - {my_result_offset}], {TEMP_REG_3} ; save value at address to dest\n')
-                            if 'global' in ue_data:
-                                self.write_asm(f'    mov {ue_data["name"]}, {TEMP_REG_3} ; save global value\n')
+                            if 'global' in left_data:
+                                self.write_asm(f'    mov {left_data["name"]}, {TEMP_REG_3} ; save global value\n')
                         else:
                             # *a = *b
                             # *p = b[1]
@@ -718,12 +780,17 @@ class AssignmentExpression(CComponent):
                             self.write_asm(f'    mov {TEMP_REG_3}, [{TEMP_REG_4}]\n')
                             self.write_asm(f'    mov [{TEMP_REG_5}], {TEMP_REG_3} ; save value at address to address\n')
                     else:
-                        if ue_data['type'] in ['var', 'pointer']:
+                        if left_data['type'] in ['var', 'pointer']:
                             # a = 123
                             self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {offset}]\n')
-                            self.write_asm(f'    mov [rbp - {my_result_offset}], {TEMP_REG_4} ; save value to dest\n')
-                            if 'global' in ue_data:
-                                self.write_asm(f'    mov {ue_data["name"]}, {TEMP_REG_4} ; save global value\n')
+
+                            if set_result:
+                                self.write_asm(f'    mov [rbp - {my_result_offset}], {TEMP_REG_4} ; save value to dest\n')
+
+                            if 'global' in left_data:
+                                self.write_asm(f'    mov {left_data["name"]}, {TEMP_REG_4} ; save global value\n')
+                            else:
+                                self.write_asm(f'    mov [rbp - {left_data["offset"]}], {TEMP_REG_4} ; save global value\n')
                         else:
                             # *a = 123
                             # a[1] = 123
@@ -734,11 +801,11 @@ class AssignmentExpression(CComponent):
 
                     self.stack_free(8, 'for AssignmentExpression')
 
-                    return ue_data
+                    return left_data
                 else:
                     self.raise_code_error(f'no support')
             else:
-                self.raise_code_error(f'AssignmentExpression wrong ue type [{ue_data["type"]}]')
+                self.raise_code_error(f'AssignmentExpression wrong ue type [{left_data["type"]}]')
 
 
 class ConditionalExpression(CComponent):
@@ -1502,16 +1569,24 @@ class UnaryExpression(CComponent):
                 data = self.cast.gen_asm(result_offset, set_result = False)
 
                 print_red(f'{data}')
+                name = data['name']
 
                 if data['type'] == 'var':
-                    self.write_asm(f'    mov {TEMP_REG_4}, rbp\n')
-                    self.write_asm(f'    sub {TEMP_REG_4}, {data["offset"]}\n')
+                    if 'global' in data:
+                        if data['data_type'] in ['int']:
+                            self.write_asm(f'    lea {TEMP_REG_4}, {name}\n')
+                        else:
+                            self.write_asm(f'    lea {TEMP_REG_4}, {name}\n')
+                    else:
+                        # local stack address
+                        self.write_asm(f'    mov {TEMP_REG_4}, rbp\n')
+                        self.write_asm(f'    sub {TEMP_REG_4}, {data["offset"]}\n')
 
                     if set_result:
                         self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; save address\n')
 
                     return {'type':'mem', 'offset':result_offset}
-                elif data['type'] in ['member']:
+                elif data['type'] in ['member', 'de_array', 'de_pointer']:
                     self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {result_offset}]\n')
 
                     if set_result:
@@ -1614,12 +1689,14 @@ class PostfixExpression(CComponent):
                         self.raise_code_error(f'post {item} on non var')
 
                 elif item[0] == '.':
-                    if current_result['type'] in ['var', 'de_array', 'de_pointer']:
+                    if current_result['type'] in ['var', 'de_array', 'de_pointer', 'member']:
                         # print_red(current_result)
                         # print_red(item)
 
-                        #if current_result['type'] in ['de_array', 'de_pointer']:
-                        #    raise
+                        if current_result['type'] == 'member':
+                            print_red(current_result)
+                            print_red(item)
+                            #self.raise_code_error(f'wtf')
 
                         # get struct data
 
@@ -1630,36 +1707,83 @@ class PostfixExpression(CComponent):
                         if struct is None:
                             self.raise_code_error(f'[{current_result["data_type"]}] not found')
 
-                        # not struct
+                        # check struct
                         if struct['type'] != 'struct':
                             self.raise_code_error(f'. on non struct [{current_result["data_type"]}]')
 
-                        # not member
-                        member_data = struct['struct_data'].get(item[1].name, None)
+                        # check member
+                        member_name = item[1].name
+                        member_data = struct['struct_data'].get(member_name, None)
                         if member_data is None:
-                            self.raise_code_error(f'[{item[1].name}] is not a member of {current_result["data_type"]}')
+                            self.raise_code_error(f'[{member_name}] is not a member of {current_result["data_type"]}')
 
                         if current_result['type'] in ['de_array', 'de_pointer']:
                             # runtime address
                             self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {result_offset}] ; get struct address\n')
-                            self.write_asm(f'    sub {TEMP_REG_4}, {member_data["offset"]} ; get struct member address\n')
+                            self.write_asm(f'    add {TEMP_REG_4}, {member_data["offset"]} ; get struct member address\n')
+                        elif current_result['type'] in ['member']:
+                            # a.b.c.d
+                            # runtime address
+                            self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {result_offset}] ; get struct address\n')
+                            self.write_asm(f'    add {TEMP_REG_4}, {member_data["offset"]} ; get struct member address\n')
                         else:
                             if 'global' in current_result:
                                 self.write_asm(f'    lea {TEMP_REG_4}, {current_result["name"]} ; get global struct address\n')
                                 self.write_asm(f'    add {TEMP_REG_4}, {member_data["offset"]}; get member address\n')
-                            else:
+                            else: # stack
                                 self.write_asm(f'    mov {TEMP_REG_4}, rbp\n')
                                 self.write_asm(f'    sub {TEMP_REG_4}, {current_result["offset"] - member_data["offset"]} ; get struct member address\n')
 
                         # set address to result_offset
                         self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; struct member address to result_offset\n')
 
+                        # update to member
                         current_result['type'] = 'member'
+                        current_result['data_type'] = member_data['data_type']
+                        current_result['offset'] = member_data['offset']
                     else:
                         self.raise_code_error(f'. on [{current_result["type"]}]')
 
                 elif item[0] == '->':
-                    self.write_asm(f'    ; {self.primary.idf.name}->{item[1]}\n')
+                    if current_result['type'] in ['pointer']:
+                        # print_red(current_result)
+                        # print_red(item)
+
+                        # get struct data
+
+                        # struct S1 *p;
+                        # p->a = 123;
+                        # current_result = {'type': 'pointer', 'data_type': 'S1', 'name': 'p', 'offset': 24}
+                        struct = self.get_scope_item(current_result['data_type'])
+                        if struct is None:
+                            self.raise_code_error(f'[{current_result["data_type"]}] not found')
+
+                        # not struct
+                        if struct['type'] != 'struct':
+                            self.raise_code_error(f'. on non struct [{current_result["data_type"]}]')
+
+                        # not member
+                        member_name = item[1].name
+                        member_data = struct['struct_data'].get(member_name, None)
+                        if member_data is None:
+                            self.raise_code_error(f'[{member_name}] is not a member of {current_result["data_type"]}')
+
+                        if 'global' in current_result:
+                            self.write_asm(f'    mov {TEMP_REG_4}, {current_result["name"]} ; get global pointer value\n')
+                        else:
+                            self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {current_result["offset"]}]; get pointer value\n')
+
+                        self.write_asm(f'    add {TEMP_REG_4}, {member_data["offset"]} ; get member address\n')
+
+                        # set address to result_offset
+                        self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; struct member address to result_offset\n')
+
+                        # update to member
+                        current_result['type'] = 'member'
+                        current_result['data_type'] = member_data['data_type']
+                        current_result['offset'] = member_data['offset']
+                    else:
+                        self.raise_code_error(f'. on [{current_result["type"]}]')
                 elif item[0] == 'array index':
 
                     # stack layout
@@ -1713,6 +1837,16 @@ class PostfixExpression(CComponent):
                     # new_address = current_address + exp * sub_elements_count * element_size
 
                     element_size = 8 # 8 for all simple data types for now
+
+                    data_type = current_result['data_type']
+                    if data_type in []:
+                        pass
+                    else:
+                        scope_item = self.get_scope_item(data_type)
+                        if scope_item is None:
+                            self.raise_code_error(f'[data_type] not defined')
+
+                        element_size = scope_item['size']
 
                     # exp * sub_elements_count * element_size
                     self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {offset}] ; get exp result\n')
@@ -1794,6 +1928,9 @@ class PostfixExpression(CComponent):
                             self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {last_offset}]\n')
                             self.write_asm(f'    mov {TEMP_REG_3}, [{TEMP_REG_4}]\n')
                             self.write_asm(f'    mov [rbp - {last_offset}], {TEMP_REG_3}\n')
+                        elif ae_data['type'] in ['array']:
+                            # get address value
+                            pass
                         else:
                             self.raise_code_error(f'wrong arg type {ae_data["type"]}')
 
@@ -1912,8 +2049,14 @@ class PrimaryExpression(CComponent):
                 self.raise_code_error(f'[{name}] not defined')
 
             if set_result:
-                if scope_item['type'] in ['array']:
-                    pass
+                if scope_item['type'] in ['array']: # get array address
+                    if 'global' in scope_item:
+                        self.write_asm(f'    lea {TEMP_REG_4}, {name} ; get array address [{name}]\n')
+                        self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; move array address to result_offset {result_offset}\n')
+                    else:
+                        self.write_asm(f'    mov {TEMP_REG_4}, rbp ; get array address{name}\n')
+                        self.write_asm(f'    sub {TEMP_REG_4}, {scope_item["offset"]} ; get array address {name}\n')
+                        self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; move array address {name} to result_offset {result_offset}\n')
                 elif scope_item['type'] in ['var', 'pointer']:
                     if 'global' in scope_item:
                         type_item = self.get_scope_item(scope_item['data_type'])

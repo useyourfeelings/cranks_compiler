@@ -229,7 +229,7 @@ class Compiler:
                 self.skip_white()
 
                 if not self.now_all_white():
-                    self.raise_code_error(f'get_external_declaration failed')
+                    self.raise_code_error(f'get declaration failed')
 
                 break
 
@@ -3073,7 +3073,16 @@ class Compiler:
 
         cmd_1 = f'{ml64_exe} /c ../compiler/{libc_name}.asm'
 
-        cmd_2 = f'{ml64_exe} ./{name}.asm ./{libc_name}.obj {lib_string} /link /subsystem:console /entry:main'
+        cmd_2 = f'{ml64_exe} ./{name}.asm ./{libc_name}.obj {lib_string} /link /subsystem:console /entry:main '
+
+        # default /stack:1048576,4096
+        # https://learn.microsoft.com/en-us/cpp/build/reference/stacksize?view=msvc-170
+        # without calling __chkstk, large stack array will cause memory violation
+        # https://learn.microsoft.com/en-us/windows/win32/devnotes/-win32-__chkstk?source=recommendations
+        # https://stackoverflow.com/questions/4123609/allocating-a-buffer-of-more-a-page-size-on-stack-will-corrupt-memory
+        # https://www.metricpanda.com/rival-fortress-update-45-dealing-with-__chkstk-__chkstk_ms-when-cross-compiling-for-windows/
+        # not using __chkstk for simplicity
+        cmd_2 += '/stack:1048576,1048576'
 
         # todo: subprocess displays garbage on error with chinese system.
 
