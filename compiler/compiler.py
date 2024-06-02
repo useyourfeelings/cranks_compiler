@@ -13,6 +13,7 @@ import subprocess
 import datetime
 import copy
 import pprint
+import json
 
 import compiler.component as comp
 import compiler.tool as tool
@@ -51,8 +52,6 @@ class Compiler:
         self.asm_data = io.StringIO()  # .data
         self.asm_code = io.StringIO()  # .code
 
-        self.default_function_stack_size = 1024
-
         self.current_function = None
         self.current_lineno = 1
 
@@ -71,6 +70,16 @@ class Compiler:
 
         self.scopes = [Scope()] # default empty
 
+    def init(self):
+        self.depth = 0
+        self.asm_head = io.StringIO()
+        self.asm_data = io.StringIO()  # .data
+        self.asm_code = io.StringIO()  # .code
+        self.current_function = None
+        self.current_lineno = 1
+        self.item_id = 0
+        self.scopes = [Scope()]  # default empty
+        self.source_file_index = -1
 
     def enter_scope(self):
         # combine to new_outer
@@ -3017,9 +3026,7 @@ class Compiler:
 
     def compile(self, source_file_name):
         try:
-            self.dbg_ok(f'os.getcwd() = {os.getcwd()}')
-            os.chdir('./output')
-            self.dbg_ok(f'os.getcwd() now = {os.getcwd()}')
+            self.init()
 
             self.dbg_ok(f'compile {source_file_name}')
             file_name = os.path.basename(source_file_name)
@@ -3033,27 +3040,27 @@ class Compiler:
 
             self.remove_comments(name)
 
-            self.source_file_index = -1
-
-            self.current_lineno = 1
             self.print_depth = True
             tu = self.get_translation_unit()
             self.print_depth = False
 
-            # self.dbg_ok(f'\n{tu = }')
             tu.print_me()
 
             result = self.gen_asm(name, tu)
             if result:
                 result = self.build(name)
                 if result:
-                    self.run(name + '.exe')
+                    result, output = self.run(name + '.exe')
+                    if result:
+                        return True, output
 
         except CompilerError as e:
             self.dbg_fail(e)
         except CodeError as e:
             traceback.print_exc()
             self.dbg_fail(e)
+
+        return False, None
 
     def build(self, name):
         # now in output folder
@@ -3093,7 +3100,6 @@ class Compiler:
             self.dbg_yellow(f'assembler result = {result}')
             if result.returncode == 0:
                 self.dbg_ok(f'assembler ok')
-                # return True
             else:
                 raise CompilerError(f'assembler failed 1')
 
@@ -3117,15 +3123,50 @@ class Compiler:
         try:
             self.dbg_yellow(f'start run {name}')
             # check_output run
-            result = subprocess.run(f'{name}', shell = True, encoding = 'utf-8')  # , encoding = 'utf8'
+            result = subprocess.run(f'{name}', shell = True, encoding = 'utf-8', stdout = subprocess.PIPE)  # , encoding = 'utf8'
             self.dbg_yellow(f'run {name} result = {result}')
             if result.returncode == 0:
                 self.dbg_ok(f'run ok')
-                return True
+
+                # print(dir(result))
+                # print(type(result.stdout))
+                print(result.stdout)
+                return True, result.stdout
             else:
                 self.dbg_fail(f'run failed')
 
         except subprocess.CalledProcessError as e:
             self.dbg_fail(f'run failed error = {e}')
 
-        return False
+        return False, None
+
+    def run_tests(self):
+        self.dbg_ok(f'os.getcwd() = {os.getcwd()}')
+        os.chdir('./output')
+        self.dbg_ok(f'os.getcwd() now = {os.getcwd()}')
+
+        with open(f'../test_case/test.json') as test_json:
+            test_info = json.load(test_json)
+            print(test_info)
+
+            test_start = test_info['test_start']
+            test_end = test_info['test_end']
+
+            for i in range(test_start, test_end + 1):
+                ok, output = self.compile(f'test_{i}.c')
+                if not ok:
+                    raise CompilerError(f'test_{i}.c failed')
+
+                output = io.StringIO(output)
+
+                with open(f'../test_case/test_{i}.ans', 'r', encoding = 'utf8') as answer:
+                    while True:
+                        answer_line = answer.readline()
+                        if not answer_line:
+                            break
+
+                        output_line = output.readline()
+                        if answer_line != output_line:
+                            raise CompilerError(f'test_{i}.c wrong answer\noutput_line =\n{output_line}\nanswer_line =\n{answer_line}\n')
+
+            self.dbg_ok(f'run_tests ok')

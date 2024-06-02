@@ -17,6 +17,7 @@ if __name__ == '__main__':
 
         c = compiler.Compiler(args.ml64_path, args.win_sdk_lib_path)
         c.simple_self_test()
+        c.run_tests()
         c.compile(args.source_file_name)
     except:
         traceback.print_exc()

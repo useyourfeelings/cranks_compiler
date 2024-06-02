@@ -1,0 +1,2 @@
+pointer a = 2222
+pointer a = 5432, *p = 5432, *p2 = 5432

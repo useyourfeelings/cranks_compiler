@@ -1,0 +1,42 @@
+scope 888 123 789 790
+scope 222 333
+loop 0 0
+loop 0 1
+loop 0 2
+loop 1 0
+loop 1 1
+loop 1 2
+loop 2 0
+loop 2 1
+loop 2 2
+scope 444
+loop 0 0
+loop 0 1
+loop 0 2
+loop 1 0
+loop 1 1
+loop 1 2
+loop 2 0
+loop 2 1
+loop 2 2
+scope 888 123 789 790
+scope 222 333
+loop 0 0
+loop 0 1
+loop 0 2
+loop 1 0
+loop 1 1
+loop 1 2
+loop 2 0
+loop 2 1
+loop 2 2
+scope 444
+loop 0 0
+loop 0 1
+loop 0 2
+loop 1 0
+loop 1 1
+loop 1 2
+loop 2 0
+loop 2 1
+loop 2 2

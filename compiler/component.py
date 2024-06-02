@@ -803,12 +803,12 @@ class PostfixExpression(CComponent):
                     element_size = 8 # 8 for all simple data types for now
 
                     data_type = current_component['data_type']
-                    if data_type in []:
+                    if data_type in ['int']:
                         pass
                     else:
                         scope_item = self.get_scope_item(data_type)
                         if scope_item is None:
-                            self.raise_code_error(f'[data_type] not defined')
+                            self.raise_code_error(f'[{data_type}] not defined')
 
                         element_size = scope_item['size']
 
@@ -929,6 +929,9 @@ class PostfixExpression(CComponent):
                         self.stack_free(8, 'clean padding for function call')
 
                     self.write_asm(f'\n    ; function call over\n\n')
+
+                    current_component['type'] = 'mem';
+                    current_component['offset'] = result_offset
 
                 else:
                     raise CompilerError(f'unknown postfix data {item}')

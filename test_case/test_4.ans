@@ -1,0 +1,17 @@
+array printf 0xa
+array printf 0x0
+array printf 0x0
+array printf 0x0
+array printf 0x6667
+array printf 0x6668
+array printf 0x6669
+array printf 0x0
+array printf 0x9999
+array printf 0x6668
+array printf 0x9999
+array printf 0x0
+array printf 0x3333
+array printf 0x3333
+array printf *p = 0x4444
+array printf 0x4444 0x888a
+array printf 0x6667
