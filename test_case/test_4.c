@@ -10,6 +10,7 @@ int array(){
     int *p = &a;
 
     arrrrrrr[1][2] = *p;//0x6666;
+    arrrrrrr[2][2] = arrrrrrr[2][3] = 0x777;
 
     printf("array printf 0x%x\n", arrrrrrr[1][2]);
     printf("array printf 0x%x\n", arrrrrrr[1][3]);

@@ -23,7 +23,8 @@ int pointer(){
 
     int *p2 = &a;
      *p2  =   *b -1234;
-
+     //*p2 = 1;
+//printf("0x%x 0x%x 0x%x\n", p2, &a, b);
 
     printf("pointer a = %d, *p = %d, *p2 = %d\n", a, *p, *p2); // , p == p2
 }

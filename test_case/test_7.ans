@@ -1,0 +1,28 @@
+struct_test s1.a = 666 s1.b = 1443 s1.c = 889 s1.d = 777 
+struct_test 8 16 8 32 824
+wtf1
+struct_test 666 0 0 13111
+struct_test s1.a = 15 s1.b = 15 s1.c = 15 s1.d = 15 
+struct_test s1.a = 666 s1.b = 1443 s1.c = 889 s1.d = 777 
+loop 0 0
+loop 0 1
+loop 0 2
+loop 1 0
+loop 1 1
+loop 1 2
+loop 2 0
+loop 2 1
+loop 2 2
+s0 1 0 1120
+saaaaa 111 222
+wtf1 = 123, *p1 = 123 *p2 = 666
+s0.c = 777, p2->c = 777
+s0.c = 778, p2->c = 778
+s0.c = 11111222, p2->c = 11111222
+s2.s1.a = 6662, s2.s1.c = 0, s2.a = 0
+6662 0 0 111
+sa1[6].aa = 222 sa1[6].s1.d = 333
+5184 0
+678 678 333
+222 333
+222 333

@@ -17,7 +17,7 @@ import json
 
 import compiler.component as comp
 import compiler.tool as tool
-from compiler.tool import CompilerError, CodeError
+from compiler.tool import CompilerError, CodeError, Color
 
 
 class Scope:
@@ -36,7 +36,7 @@ class Compiler:
         self.win_sdk_lib_path = win_sdk_lib_path
         self.depth = 0
         self.print_depth = False
-        self.print_parsing = False
+        self.print_on = True
         self.saved_index = None
         self.source_file_index = None
         self.source_file_buffer = None
@@ -112,31 +112,55 @@ class Compiler:
 
         return do_go_deep
 
+    def set_print_on_off(self, on_off):
+        self.print_on = on_off
+        comp.NoObject.print_on = on_off
+
     def dbg(self, text):
-        if self.print_parsing:
+        if self.print_on:
             if self.print_depth:
                 # print(f'\33[38;5;1m[depth = {self.depth:04}]{" " * (self.depth * 2)}{text}')
                 print(f'[depth = {self.depth:04}]{" " * (self.depth * 2)}{text}')
             else:
                 print(f'{text}')
 
+    def print_normal(self, text):
+        if self.print_on:
+            print(f'{text}')
+
+    def print_red(self, text):
+        if self.print_on:
+            print(f'{Color.red}{text}{Color.end}')
+
+    def print_yellow(self, text):
+        if self.print_on:
+            print(f'{Color.yellow}{text}{Color.end}')
+
+    def print_green(self, text):
+        if self.print_on:
+            print(f'{Color.green}{text}{Color.end}')
+
+    def print_orange(self, text):
+        if self.print_on:
+            print(f'{Color.orange}{text}{Color.end}')
+
     def dbg_ok(self, text):
         if self.print_depth:
-            tool.print_green(f'[depth = {self.depth:04}]{" " * (self.depth * 2)}{text}')
+            self.print_green(f'[depth = {self.depth:04}]{" " * (self.depth * 2)}{text}')
         else:
-            tool.print_green(f'{text}')
+            self.print_green(f'{text}')
 
     def dbg_fail(self, text):
         if self.print_depth:
-            tool.print_red(f'[depth = {self.depth:04}]{" " * (self.depth * 2)}{text}')
+            self.print_red(f'[depth = {self.depth:04}]{" " * (self.depth * 2)}{text}')
         else:
-            tool.print_red(f'{text}')
+            self.print_red(f'{text}')
 
     def dbg_yellow(self, text):
         if self.print_depth:
-            tool.print_yellow(f'[depth = {self.depth:04}]{" " * (self.depth * 2)}{text}')
+            self.print_yellow(f'[depth = {self.depth:04}]{" " * (self.depth * 2)}{text}')
         else:
-            tool.print_yellow(f'{text}')
+            self.print_yellow(f'{text}')
 
     def error(self, text):
         tool.print_orange(f'{text}')
@@ -757,6 +781,24 @@ class Compiler:
         self.dbg(f'get_declarator return comp.NoObject()')
         return comp.NoObject()
 
+    # an object's property
+
+    # lv - is lvalue?
+    # lv_address - if lv is address like *p
+    #     if normal lv. data value is in [rbp - offset].
+    #     if lv_address. data's address is in [rbp - offset].
+    # name - name in source code
+    # data_type - int, float, CustomStruct ...
+    # value - set if value is known
+    # offset - stack offset - 32
+    # array_data - array data - {'dim':2, 'ranks':[2, 100]}
+    # pointer_data - pointer data - [[], [const], []] for **const*
+    # function_data
+    # global - is global?
+    # const - is const?
+    # size - obj size
+    # struct_data - for struct definition
+
     @go_deep
     def get_direct_declarator(self, for_what = None):
         # identifier
@@ -766,19 +808,12 @@ class Compiler:
         # direct-declarator ( identifier-list? ) # function
 
         self.dbg(f'get_direct_declarator')
-        save_1 = self.save()
 
-        name = ''
-        data_type = 'na' # var array function
-        data = []
+        obj_data = {} # 'lv':1}
 
         idf = self.get_identifier()
         if idf:
-            data_type = 'var'
-            #data = [idf]
-            name = idf.name
-            # self.dbg(f'get_direct_declarator return {idf}')
-            # return idf
+            obj_data['name'] = idf.name
         elif False: # no support # else:
             if self.get_a_string('('):
                 decl = self.get_declarator()
@@ -787,7 +822,6 @@ class Compiler:
                         dd_type = 'var()'
                         data = [decl]
 
-        # if data == []:
         if not idf:
             self.dbg(f'get_direct_declarator return comp.NoObject()')
             return comp.NoObject()
@@ -802,14 +836,8 @@ class Compiler:
                 if self.get_a_string(']'):
                     # data.append(ce)
 
-                    if data_type == 'function':
-                        raise CodeError(f'function decl followed by []')
-
                     self.dbg(f'ce = {ce}')
 
-                    # raise  CompilerError(f'ce = {ce}')
-
-                    data_type = 'array'
                     array_data['dim'] += 1
                     array_data['ranks'].append(ce)
                     continue
@@ -820,36 +848,30 @@ class Compiler:
                 ptl = self.get_parameter_type_list()
                 if ptl:
                     if self.get_a_string(')'):
-                        if data_type == 'array':
+                        if array_data['dim'] > 0:
                             raise CodeError(f'array decl followed by ()')
 
-                        data.append(ptl)
-                        data_type = 'function'
-                        continue
+                        obj_data['function_data'] = ptl
+                        break
 
             self.load(save_2)
 
             if self.get_a_string('('):
                 idfs = self.get_identifier_list()
                 if self.get_a_string(')'):
-                    if data_type == 'array':
-                        raise CodeError(f'array decl followed by ()')
-
-                    data += idfs
-                    data_type = 'function'
-                    continue
+                    obj_data['function_data'] = idfs
+                    break
 
             # all fail
             self.load(save_2)
             break
 
-        return_data = {'type':data_type, 'name':name}
-        if data_type == 'array':
-            return_data['array_data'] = array_data
+        if array_data['dim'] > 0:
+            obj_data['array_data'] = array_data
 
-        self.dbg(f'get_direct_declarator return {return_data}')
-        # return dd_type, data
-        return return_data
+        self.dbg(f'get_direct_declarator return {obj_data}')
+
+        return obj_data
 
     @go_deep
     def get_identifier_list(self):
@@ -2915,6 +2937,7 @@ class Compiler:
             raise e
         except:
             traceback.print_exc()
+            self.dbg_fail(f'gen_asm failed. lineno = {self.current_lineno}')
 
         return False
 
@@ -3024,7 +3047,8 @@ class Compiler:
         self.source_file_buffer_len = len(self.source_file_buffer)
 
 
-    def compile(self, source_file_name):
+    def compile_and_run(self, source_file_name, silent = False):
+        error = None
         try:
             self.init()
 
@@ -3040,6 +3064,9 @@ class Compiler:
 
             self.remove_comments(name)
 
+            if silent:
+                self.set_print_on_off(False)
+
             self.print_depth = True
             tu = self.get_translation_unit()
             self.print_depth = False
@@ -3047,6 +3074,10 @@ class Compiler:
             tu.print_me()
 
             result = self.gen_asm(name, tu)
+
+            if silent:
+                self.set_print_on_off(True)
+
             if result:
                 result = self.build(name)
                 if result:
@@ -3059,10 +3090,15 @@ class Compiler:
         except CodeError as e:
             traceback.print_exc()
             self.dbg_fail(e)
+            error = e
 
-        return False, None
+        if silent:
+            self.set_print_on_off(True)
+
+        return False, error
 
     def build(self, name):
+        # call assembler. build exe
         # now in output folder
 
         # self.dbg(f'sys.getfilesystemencoding() = {sys.getfilesystemencoding()}')
@@ -3153,20 +3189,32 @@ class Compiler:
             test_end = test_info['test_end']
 
             for i in range(test_start, test_end + 1):
-                ok, output = self.compile(f'test_{i}.c')
+                ok, output = self.compile_and_run(f'test_{i}.c', silent = True)
                 if not ok:
-                    raise CompilerError(f'test_{i}.c failed')
-
-                output = io.StringIO(output)
+                    if isinstance(output, CompilerError):
+                        raise CompilerError(f'test_{i}.c failed. lineno = {self.current_lineno}')
+                    elif isinstance(output, CodeError): # fail test
+                        output = io.StringIO(output.raw_msg)
+                    else:
+                        raise CompilerError(f'test_{i}.c failed. lineno = {self.current_lineno}')
+                else:
+                    output = io.StringIO(output)
 
                 with open(f'../test_case/test_{i}.ans', 'r', encoding = 'utf8') as answer:
+                    line = 0
                     while True:
                         answer_line = answer.readline()
                         if not answer_line:
                             break
 
+                        # self.dbg_fail(f'answer_line = {answer_line}')
+
+                        line += 1
+
                         output_line = output.readline()
                         if answer_line != output_line:
-                            raise CompilerError(f'test_{i}.c wrong answer\noutput_line =\n{output_line}\nanswer_line =\n{answer_line}\n')
+                            raise CompilerError(f'test_{i}.c wrong answer at line {line}\noutput_line =\n{output_line}\nanswer_line =\n{answer_line}\n')
+
+                self.dbg_ok(f'test_{i}.c test ok!')
 
             self.dbg_ok(f'run_tests ok')
