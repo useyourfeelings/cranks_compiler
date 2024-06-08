@@ -25,7 +25,7 @@ int f3(){
     //int aaa = 7779 + 1 + 2-(7780 * 2);
     //int bbb = 4;
     int aaa = 100 / 7 * 2 + 3; // 31
-    int a = ++ ++aaa  + (2); //1  && -3;
+    int a = ++aaa  + (2); // a = 34 aaa = 32
     //printf("xc printf %d wtf666", print("12"));
     printf("f3 printf %d wtf %d %d %d %d\n", 1, 2, aaa, b, a);
 

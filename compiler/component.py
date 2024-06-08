@@ -78,7 +78,7 @@ class CComponent:
 
     def print_current_scope(self, msg = ''):
         self.print(f'{self.__class__.__name__} {msg} scope_level = {len(self.compiler.scopes)} scope = ')
-        pprint.pself.print(self.compiler.scopes[-1], indent = 4)
+        pprint.pprint(self.compiler.scopes[-1], indent = 4)
 
     def get_scope_item(self, name):
         item = self.compiler.scopes[-1].current.get(name, None)
@@ -87,15 +87,16 @@ class CComponent:
 
         return item
 
-    def add_to_scope(self, item):
+    def add_to_scope(self, item, add_to_variable_stack_size = True):
         if item['name'] in self.compiler.scopes[-1].current:
             self.raise_code_error(f'[{item["name"]}] already defined')
 
         self.compiler.scopes[-1].current[item['name']] = item
 
-        if 'lv' in item or 'array_data' in item:
-            if 'global' not in item:
-                self.compiler.scopes[-1].variable_stack_size += item['size']
+        if add_to_variable_stack_size:
+            if 'lv' in item or 'array_data' in item:
+                if 'global' not in item:
+                    self.compiler.scopes[-1].variable_stack_size += item['size']
 
     def enter_scope(self):
         self.write_asm(f'    ; enter_scope\n')
@@ -390,7 +391,6 @@ class AssignmentExpression(CComponent):
             self.write_asm(f'    ; AssignmentExpression get left_data\n')
             left_data = self.ue.gen_asm(my_result_offset)
 
-            # if left_data['type'] in ['var', 'pointer', 'de_pointer', 'de_array', 'member']:
             if 'lv' in left_data:
                 # case 1: *p = 123;
                 # case 2: abc = *p;
@@ -517,7 +517,7 @@ class PrimaryExpression(CComponent):
     def gen_asm(self, result_offset = None, set_result = True, need_global_const = False):
         self.write_asm(f'    ; PrimaryExpression gen_asm\n')
 
-        if need_global_const:
+        if need_global_const: # todo ( expression )
             if self.idf:
                 scope_item = self.get_scope_item(self.idf.name)
                 if scope_item is None:
@@ -631,7 +631,7 @@ class PrimaryExpression(CComponent):
 
             return {'data_type':'string', 'name':string_var_name, 'global':1}
         else:
-            return self.exp.gen_asm()
+            return self.exp.gen_asm(result_offset)
 
 
 class PostfixExpression(CComponent):
@@ -661,350 +661,385 @@ class PostfixExpression(CComponent):
     def gen_asm(self, result_offset, set_result = True, need_global_const = False, **kwargs):
         self.write_asm(f'    ; PostfixExpression gen_asm\n')
 
-        if self.primary.idf:
-            scope_item = self.primary.gen_asm(result_offset, set_result = True, need_global_const = need_global_const)
+        # if self.primary.idf:
+        primary_item = self.primary.gen_asm(result_offset, set_result = True, need_global_const = need_global_const)
+        self.print_red(primary_item)
 
-            if need_global_const:
-                if len(self.data) > 0:
-                    self.raise_code_error(f'need_global_const')
+        if need_global_const:
+            if len(self.data) > 0:
+                self.raise_code_error(f'need_global_const')
 
-            current_obj = copy.deepcopy(scope_item) # avoid breaking original data
+        current_obj = copy.deepcopy(primary_item) # avoid breaking original data
 
-            for item in self.data:
-                if item in ['++', '--']:
-                    if 'lv' not in current_obj:
-                        self.raise_code_error(f'post {item} needs lvalue')
+        for item in self.data:
+            if item in ['++', '--']:
+                if 'lv' not in current_obj:
+                    self.raise_code_error(f'post {item} needs lvalue')
 
-                    if result_offset is None:
-                        self.raise_compiler_error(f'post {item} must has result_offset')
+                if result_offset is None:
+                    self.raise_compiler_error(f'post {item} must has result_offset')
 
+                # if current_obj['name'] != 'wtf':
+                #    raise
+
+                if 'lv_address' in current_obj:
+                    self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {result_offset}] ; get lv_address\n')
+                    self.write_asm(f'    mov {TEMP_REG_5}, {TEMP_REG_4} ; copy address\n')
+                    self.write_asm(f'    mov {TEMP_REG_4}, [{TEMP_REG_4}] ; get lvalue\n')
+                    self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; value to result\n')
+
+                    # update lvalue
+                    if item == '++':
+                        self.write_asm(f'    inc qword ptr [{TEMP_REG_5}] ; {current_obj["name"]}++\n')
+                    else:
+                        self.write_asm(f'    dec qword ptr [{TEMP_REG_5}] ; {current_obj["name"]}--\n')
+                else:
                     # get original value as result
                     # todo: global
-                    self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {scope_item["offset"]}]\n')
+                    self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {current_obj["offset"]}]\n')
                     self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4}\n')
 
                     # current_obj = {'data_type':'int', 'offset':result_offset}
 
                     # update lvalue
                     if item == '++':
-                        self.write_asm(f'    inc qword ptr [rbp - {scope_item["offset"]}] ; {self.primary.idf.name}++\n')
+                        self.write_asm(f'    inc qword ptr [rbp - {current_obj["offset"]}] ; {current_obj["name"]}++\n')
                     else:
-                        self.write_asm(f'    dec qword ptr [rbp - {scope_item["offset"]}] ; {self.primary.idf.name}--\n')
+                        self.write_asm(f'    dec qword ptr [rbp - {current_obj["offset"]}] ; {current_obj["name"]}--\n')
 
-                elif item[0] == '.':
-                    if 'lv' in current_obj:
-                        self.print_red(f'{current_obj = }')
+                current_obj['offset'] = result_offset
+                current_obj.pop('lv')
+                current_obj.pop('lv_address', None)
 
-                        # get struct data
+            elif item[0] == '.':
+                if 'lv' in current_obj:
+                    self.print_red(f'{current_obj = }')
 
-                        # struct S1 s1;
-                        # s1.a = 123;
-                        # current_obj = {'type': 'var', 'data_type': 'S1', 'name': 's1', 'offset': 24}
-                        struct = self.get_scope_item(current_obj['data_type'])
-                        if struct is None:
-                            self.raise_code_error(f'[{current_obj["data_type"]}] not found')
+                    # get struct data
 
-                        # check struct
-                        if 'struct_data' not in struct:
-                            self.raise_code_error(f'. on non struct [{current_obj["data_type"]}]')
+                    # struct S1 s1;
+                    # s1.a = 123;
+                    # current_obj = {'type': 'var', 'data_type': 'S1', 'name': 's1', 'offset': 24}
+                    struct = self.get_scope_item(current_obj['data_type'])
+                    if struct is None:
+                        self.raise_code_error(f'[{current_obj["data_type"]}] not found')
 
-                        # check member
-                        member_name = item[1].name
-                        member_data = struct['struct_data'].get(member_name, None)
-                        if member_data is None:
-                            self.raise_code_error(f'[{member_name}] is not a member of {current_obj["data_type"]}')
-                        member_data = copy.deepcopy(member_data) # avoid breaking original data
+                    # check struct
+                    if 'struct_data' not in struct:
+                        self.raise_code_error(f'. on non struct [{current_obj["data_type"]}]')
 
-                        # get runtime address
-                        if 'lv_address' in current_obj:
-                            self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {result_offset}] ; get struct address\n')
+                    # check member
+                    member_name = item[1].name
+                    member_data = struct['struct_data'].get(member_name, None)
+                    if member_data is None:
+                        self.raise_code_error(f'[{member_name}] is not a member of {current_obj["data_type"]}')
+                    member_data = copy.deepcopy(member_data) # avoid breaking original data
+
+                    # get runtime address
+                    if 'lv_address' in current_obj:
+                        self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {result_offset}] ; get struct address\n')
+                        self.write_asm(f'    add {TEMP_REG_4}, {member_data["offset"]} ; get struct member address\n')
+                    else:
+                        if 'global' in current_obj:
+                            self.write_asm(f'    lea {TEMP_REG_4}, {current_obj["name"]} ; get global struct address\n')
                             self.write_asm(f'    add {TEMP_REG_4}, {member_data["offset"]} ; get struct member address\n')
                         else:
-                            if 'global' in current_obj:
-                                self.write_asm(f'    lea {TEMP_REG_4}, {current_obj["name"]} ; get global struct address\n')
-                                self.write_asm(f'    add {TEMP_REG_4}, {member_data["offset"]} ; get struct member address\n')
-                            else:
-                                self.write_asm(f'    mov {TEMP_REG_4}, rbp ; get local struct address\n')
-                                self.write_asm(f'    sub {TEMP_REG_4}, {current_obj["offset"] - member_data["offset"]} ; get struct member address\n')
+                            self.write_asm(f'    mov {TEMP_REG_4}, rbp ; get local struct address\n')
+                            self.write_asm(f'    sub {TEMP_REG_4}, {current_obj["offset"] - member_data["offset"]} ; get struct member address\n')
 
-                        # set runtime address to result_offset
-                        self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; struct member address to result_offset\n')
+                    # set runtime address to result_offset
+                    self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; struct member address to result_offset\n')
 
-                        # update to member
-                        current_obj['data_type'] = member_data['data_type']
-                        current_obj['offset'] = result_offset # member_data['offset']
-                        current_obj['name'] = member_data['name']
+                    # update to member
+                    current_obj['data_type'] = member_data['data_type']
+                    current_obj['offset'] = result_offset # member_data['offset']
+                    current_obj['name'] = member_data['name']
 
-                        if 'global' in current_obj: # force member to non-global
-                            current_obj.pop('global')
+                    if 'global' in current_obj: # force member to non-global
+                        current_obj.pop('global')
 
-                        if 'array_data' in member_data:
-                            current_obj['array_data'] = member_data['array_data']
-                            current_obj.pop('lv')
-                            current_obj.pop('lv_address', None)
-                        else:
-                            current_obj['lv_address'] = 1
-
-                        if 'pointer_data' in member_data:
-                            current_obj['pointer_data'] = member_data['pointer_data']
+                    if 'array_data' in member_data:
+                        current_obj['array_data'] = member_data['array_data']
+                        current_obj.pop('lv')
+                        current_obj.pop('lv_address', None)
                     else:
-                        self.raise_code_error(f'. on [{current_obj["type"]}]')
-
-                elif item[0] == '->':
-                    if 'pointer_data' in current_obj:
-                        # S1 *p2
-                        # {'lv': 1, 'data_type': 'S1', 'name': 'p2', 'offset': 84880, 'size': 832, 'pointer_data': [[]]}
-
-                        # get struct data
-
-                        # struct S1 *p;
-                        # p->a = 123;
-                        # current_obj = {'type': 'pointer', 'data_type': 'S1', 'name': 'p', 'offset': 24}
-                        struct = self.get_scope_item(current_obj['data_type'])
-                        if struct is None:
-                            self.raise_code_error(f'[{current_obj["data_type"]}] not found')
-
-                        # not struct
-                        if 'struct_data' not in struct:
-                            self.raise_code_error(f'. on non struct [{current_obj["data_type"]}]')
-
-                        # not member
-                        member_name = item[1].name
-                        member_data = struct['struct_data'].get(member_name, None)
-                        if member_data is None:
-                            self.raise_code_error(f'[{member_name}] is not a member of {current_obj["data_type"]}')
-
-                        # get runtime address
-                        if 'global' in current_obj:
-                            self.write_asm(f'    mov {TEMP_REG_4}, {current_obj["name"]} ; get global pointer value\n')
-                        else:
-                            self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {current_obj["offset"]}]; get pointer value\n')
-
-                        self.write_asm(f'    add {TEMP_REG_4}, {member_data["offset"]} ; get member address\n')
-
-                        # set address to result_offset
-                        self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; struct member address to result_offset\n')
-
-                        # update to member
-                        current_obj['data_type'] = member_data['data_type']
-                        current_obj['offset'] = result_offset # member_data['offset']
-                        current_obj['name'] = member_data['name']
-
-                        if 'global' in current_obj:  # force member to non-global
-                            current_obj.pop('global')
-
-                        if 'array_data' in member_data:
-                            current_obj['array_data'] = member_data['array_data']
-                            current_obj.pop('lv')
-                            current_obj.pop('lv_address', None)
-                        else:
-                            current_obj['lv_address'] = 1
-
-                        if 'pointer_data' in member_data:
-                            current_obj['pointer_data'] = member_data['pointer_data']
-                    else:
-                        self.raise_code_error(f'. on [{current_obj["type"]}]')
-                elif item[0] == 'array index':
-
-                    # stack layout
-                    # a[2][3][4]
-                    # [[[x, x, x, x], [x, x, x, x], [x, x, x, x]], [[x, x, x, x], [x, x, x, x], [x, x, x, x]]]
-
-                    # example
-                    # int arrrrrrr[3][222]
-                    # [[x, x, ...], [x, x, ...], [x, x, ...]]
-                    # current_obj = {'type': 'array', 'data_type': 'int', 'name': 'arrrrrrr', 'offset': 5336, 'dim': 2, 'ranks': [3, 222]}
-
-                    # arrrrrrr[exp]
-                    # sub_elements_count = 222
-                    # new_address = rbp - 5336 + exp * sub_elements_count
-                    # -> {'type': 'de_array', 'data_type': 'int', 'name': 'arrrrrrr', 'offset': 5336, 'dim': 1, 'ranks': [222]}
-                    # save new_address to result_offset
-
-                    if 'array_data' not in current_obj and 'pointer_data' not in current_obj:
-                        self.raise_code_error(f'indexing on wrong type [{current_obj}]')
-
-                    if 'array_data' in current_obj:
-                        pass # address already in result_offset
-                    elif 'pointer_data' in current_obj:
-                        self.raise_compiler_error(f'no support yet')
-
-                    offset = self.stack_alloc(8, 'array index. for exp result')
-
-                    exp_data = item[1].gen_asm(offset, fetch_lv_address_value = True)
-                    self.print_red(exp_data)
-
-                    # check exp_data
-                    if exp_data['data_type'] not in ['int']:
-                        self.raise_code_error(f'wrong type {exp_data["data_type"]} as array index')
-
-                    # get array[exp] address
-                    # sub_elements_count is known at compile time by array declaration
-                    sub_elements_count = 1
-                    for rank in current_obj['array_data']['ranks'][1:]:
-                        sub_elements_count *= rank
-
-                    self.write_asm(f'    ; sub_elements_count = {sub_elements_count} is known at compile time by array declaration\n')
-
-                    # new_address = current_address + exp * sub_elements_count * element_size
-
-                    element_size = 8 # 8 for all simple data types for now
-
-                    data_type = current_obj['data_type']
-                    if data_type in ['int']:
-                        pass
-                    else:
-                        scope_item = self.get_scope_item(data_type)
-                        if scope_item is None:
-                            self.raise_code_error(f'[{data_type}] not defined')
-
-                        element_size = scope_item['size']
-
-                    # exp * sub_elements_count * element_size
-                    self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {offset}] ; get exp result\n')
-                    self.write_asm(f'    imul {TEMP_REG_4}, {sub_elements_count} ; exp * sub_elements_count\n')
-                    self.write_asm(f'    imul {TEMP_REG_4}, {element_size} ; * element_size {element_size}\n')
-
-                    # + current_address
-                    self.write_asm(f'    add {TEMP_REG_4}, [rbp - {result_offset}] ; + current_address\n')
-
-                    # save address
-                    # runtime value
-                    self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; save address\n')
-
-                    # case 1: arrrrrrr[3][222] arrrrrrr[1]
-                    # case 2: arrrrrrr[3]      arrrrrrr[1]
-                    if len(current_obj['array_data']['ranks']) >= 1:
-                        # still array
-                        current_obj['array_data']['ranks'] = current_obj['array_data']['ranks'][1:]
-                        current_obj['array_data']['dim'] -= 1
-                    else:
-                        self.raise_code_error(f'indexing on wrong data {current_obj}')
-
-                    # becomes lvalue
-                    if current_obj['array_data']['dim'] == 0:
-                        current_obj.pop('array_data')
-                        current_obj['lv'] = 1
                         current_obj['lv_address'] = 1
 
-                    current_obj['offset'] = result_offset
-
-                    # free
-                    self.stack_free(8, 'array index. for exp result')
-
-                elif item[0] == 'function call':
-                    # self.print_red(item)
-                    # self.print_red(item[1])
-                    # self.print_red(len(item[1]))
-
-                    # self.print_yellow(f'arg item = {item}')
-                    args_count = len(item[1])
-
-                    # save args count to {TEMP_REG_5}
-
-                    # stack
-                    #   {TEMP_REG_5}
-                    #   arg n
-                    #   ...
-                    #   arg 2
-                    #   arg 1
-
-                    self.write_asm(f'\n    ; start function call [{self.primary.idf.name}] offset = {self.compiler.get_function_stack_offset()}\n')
-
-                    # abi shadow
-                    # at lease 4
-                    abi_storage_args_count = args_count
-                    if abi_storage_args_count < 4:
-                        abi_storage_args_count = 4
-
-                    # alignment
-                    # 1 for {TEMP_REG_5}
-                    align = ((1 + abi_storage_args_count) * 8 + self.compiler.get_function_stack_offset()) % 16
-                    if align not in [0, 8]:
-                        self.raise_compiler_error(f'check alignment before call align = {align} not in [0, 8]')
-
-                    if align != 0:
-                        self.stack_alloc(8, 'padding for function call')
-
-                    self.push_reg(TEMP_REG_5)
-                    self.write_asm(f'    mov {TEMP_REG_5}, {args_count}; {args_count = }\n')
-
-                    # space for args
-                    last_offset = self.stack_alloc(8 * abi_storage_args_count, 'alloc function call args')
-                    self.write_asm(f'    ; last_offset = {last_offset}\n')
-
-                    # gen_asm for each arg
-                    for ae in item[1]:
-                        # self.print_red(f'arg = {ae}')
-                        ae.print_me(0)
-                        ae_data = ae.gen_asm(last_offset, fetch_lv_address_value = True)
-
-                        last_offset -= 8
-
-                    # microsoft abi
-                    # rcx rdx r8 r9 stack...
-
-                    last_offset = self.compiler.get_function_stack_offset()
-                    for i in range(0, min(4, args_count)):
-                        if i == 0:
-                            self.write_asm(f'    mov rcx, [rbp - {last_offset}] ; arg {i}\n')
-                        elif i == 1:
-                            self.write_asm(f'    mov rdx, [rbp - {last_offset}] ; arg {i}\n')
-                        elif i == 2:
-                            self.write_asm(f'    mov r8, [rbp - {last_offset}] ; arg {i}\n')
-                        elif i == 3:
-                            self.write_asm(f'    mov r9, [rbp - {last_offset}] ; arg {i}\n')
-                        last_offset -= 8
-
-                    self.write_asm(f'\n    call {self.primary.idf.name} ; {len(item[1])} args. offset = {self.compiler.get_function_stack_offset()}\n')
-                    self.write_asm(f'    ; call return. offset = {self.compiler.get_function_stack_offset()}\n')
-
-                    if set_result:
-                        self.write_asm(f'    mov [rbp - {result_offset}], rax ; save call result\n')
-
-                    # clean
-                    self.stack_free(8 * abi_storage_args_count, 'free function call args')
-                    self.pop_reg(TEMP_REG_5)
-
-                    if align != 0:
-                        self.stack_free(8, 'clean padding for function call')
-
-                    self.write_asm(f'\n    ; function call over [{self.primary.idf.name}]\n\n')
-
-                    current_obj['type'] = 'mem'
-                    current_obj['offset'] = result_offset
-
+                    if 'pointer_data' in member_data:
+                        current_obj['pointer_data'] = member_data['pointer_data']
                 else:
-                    self.raise_compiler_error(f'unknown postfix data {item}')
+                    self.raise_code_error(f'. on [{current_obj["type"]}]')
 
-            if set_result:
-                pass
+            elif item[0] == '->':
+                if 'pointer_data' in current_obj:
+                    # S1 *p2
+                    # {'lv': 1, 'data_type': 'S1', 'name': 'p2', 'offset': 84880, 'size': 832, 'pointer_data': [[]]}
 
-            if 'fetch_lv_address_value' in kwargs:
-                if 'lv_address' in current_obj:
-                    self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {result_offset}] ; get address\n')
-                    self.write_asm(f'    mov {TEMP_REG_4}, [{TEMP_REG_4}] ; fetch_lv_address_value\n')
-                    self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; save value\n')
+                    # get struct data
 
-            return current_obj
-        elif self.primary.const:
-            if self.data_count > 0:
-                self.raise_code_error(f'postfix on const')
+                    # struct S1 *p;
+                    # p->a = 123;
+                    # current_obj = {'type': 'pointer', 'data_type': 'S1', 'name': 'p', 'offset': 24}
+                    struct = self.get_scope_item(current_obj['data_type'])
+                    if struct is None:
+                        self.raise_code_error(f'[{current_obj["data_type"]}] not found')
 
-            return self.primary.gen_asm(result_offset, set_result, need_global_const = need_global_const)
+                    # not struct
+                    if 'struct_data' not in struct:
+                        self.raise_code_error(f'. on non struct [{current_obj["data_type"]}]')
 
-        elif self.primary.string:
-            # "13ef"[0]; legal but ...
+                    # not member
+                    member_name = item[1].name
+                    member_data = struct['struct_data'].get(member_name, None)
+                    if member_data is None:
+                        self.raise_code_error(f'[{member_name}] is not a member of {current_obj["data_type"]}')
 
-            if need_global_const:
-                self.raise_code_error(f'need_global_const')
+                    # get runtime address
+                    if 'global' in current_obj:
+                        self.write_asm(f'    mov {TEMP_REG_4}, {current_obj["name"]} ; get global pointer value\n')
+                    else:
+                        self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {current_obj["offset"]}]; get pointer value\n')
 
-            if self.data_count > 0:
-                self.raise_code_error(f'postfix on string')
+                    self.write_asm(f'    add {TEMP_REG_4}, {member_data["offset"]} ; get member address\n')
 
-            return self.primary.gen_asm(result_offset, set_result)
-        else:
-            return self.primary.exp.gen_asm(result_offset, set_result)
+                    # set address to result_offset
+                    self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; struct member address to result_offset\n')
+
+                    # update to member
+                    current_obj['data_type'] = member_data['data_type']
+                    current_obj['offset'] = result_offset # member_data['offset']
+                    current_obj['name'] = member_data['name']
+
+                    if 'global' in current_obj:  # force member to non-global
+                        current_obj.pop('global')
+
+                    if 'array_data' in member_data:
+                        current_obj['array_data'] = member_data['array_data']
+                        current_obj.pop('lv')
+                        current_obj.pop('lv_address', None)
+                    else:
+                        current_obj['lv_address'] = 1
+
+                    if 'pointer_data' in member_data:
+                        current_obj['pointer_data'] = member_data['pointer_data']
+                else:
+                    self.raise_code_error(f'. on [{current_obj["type"]}]')
+            elif item[0] == 'array index':
+
+                # stack layout
+                # a[2][3][4]
+                # [[[x, x, x, x], [x, x, x, x], [x, x, x, x]], [[x, x, x, x], [x, x, x, x], [x, x, x, x]]]
+
+                # example
+                # int arrrrrrr[3][222]
+                # [[x, x, ...], [x, x, ...], [x, x, ...]]
+                # current_obj = {'type': 'array', 'data_type': 'int', 'name': 'arrrrrrr', 'offset': 5336, 'dim': 2, 'ranks': [3, 222]}
+
+                # arrrrrrr[exp]
+                # sub_elements_count = 222
+                # new_address = rbp - 5336 + exp * sub_elements_count
+                # -> {'type': 'de_array', 'data_type': 'int', 'name': 'arrrrrrr', 'offset': 5336, 'dim': 1, 'ranks': [222]}
+                # save new_address to result_offset
+
+                if 'array_data' not in current_obj and 'pointer_data' not in current_obj:
+                    self.raise_code_error(f'indexing on wrong type [{current_obj}]')
+
+                if 'array_data' in current_obj:
+                    pass # address already in result_offset
+                elif 'pointer_data' in current_obj:
+                    self.raise_compiler_error(f'no support yet')
+
+                offset = self.stack_alloc(8, 'array index. for exp result')
+
+                exp_data = item[1].gen_asm(offset, fetch_lv_address_value = True)
+                self.print_red(exp_data)
+
+                # check exp_data
+                if exp_data['data_type'] not in ['int']:
+                    self.raise_code_error(f'wrong type {exp_data["data_type"]} as array index')
+
+                # get array[exp] address
+                # sub_elements_count is known at compile time by array declaration
+                sub_elements_count = 1
+                for rank in current_obj['array_data']['ranks'][1:]:
+                    sub_elements_count *= rank
+
+                self.write_asm(f'    ; sub_elements_count = {sub_elements_count} is known at compile time by array declaration\n')
+
+                # new_address = current_address + exp * sub_elements_count * element_size
+
+                element_size = 8 # 8 for all simple data types for now
+
+                data_type = current_obj['data_type']
+                if data_type in ['int']:
+                    pass
+                else:
+                    scope_item = self.get_scope_item(data_type)
+                    if scope_item is None:
+                        self.raise_code_error(f'[{data_type}] not defined')
+
+                    element_size = scope_item['size']
+
+                # exp * sub_elements_count * element_size
+                self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {offset}] ; get exp result\n')
+                self.write_asm(f'    imul {TEMP_REG_4}, {sub_elements_count} ; exp * sub_elements_count\n')
+                self.write_asm(f'    imul {TEMP_REG_4}, {element_size} ; * element_size {element_size}\n')
+
+                # + current_address
+                self.write_asm(f'    add {TEMP_REG_4}, [rbp - {result_offset}] ; + current_address\n')
+
+                # save address
+                # runtime value
+                self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; save address\n')
+
+                # case 1: arrrrrrr[3][222] arrrrrrr[1]
+                # case 2: arrrrrrr[3]      arrrrrrr[1]
+                if len(current_obj['array_data']['ranks']) >= 1:
+                    # still array
+                    current_obj['array_data']['ranks'] = current_obj['array_data']['ranks'][1:]
+                    current_obj['array_data']['dim'] -= 1
+                else:
+                    self.raise_code_error(f'indexing on wrong data {current_obj}')
+
+                # becomes lvalue
+                if current_obj['array_data']['dim'] == 0:
+                    current_obj.pop('array_data')
+                    current_obj['lv'] = 1
+                    current_obj['lv_address'] = 1
+
+                current_obj['offset'] = result_offset
+
+                # free
+                self.stack_free(8, 'array index. for exp result')
+
+            elif item[0] == 'function call':
+                # check args
+                args_count = len(item[1])
+
+                if 'function_data' not in current_obj:
+                    self.raise_code_error(f'call non-function [{current_obj}]')
+
+                    self.print_red(current_obj)
+
+                variable_arg_list = False
+                def_args_count = len(current_obj['function_data']['args'])
+                if def_args_count > 0:
+                    if current_obj['function_data']['args'][-1] == '...':
+                        variable_arg_list = True
+
+                if variable_arg_list:
+                    if args_count < (def_args_count - 1):
+                        self.raise_code_error(f'function args not match [{current_obj["name"]}]')
+                else:
+                    if args_count != len(current_obj['function_data']['args']):
+                        self.raise_code_error(f'function args not match [{current_obj["name"]}]')
+
+                # save args count to {TEMP_REG_5}
+
+                # stack
+                #   {TEMP_REG_5}
+                #   arg n
+                #   ...
+                #   arg 2
+                #   arg 1
+
+                self.write_asm(f'\n    ; start function call [{self.primary.idf.name}] offset = {self.compiler.get_function_stack_offset()}\n')
+
+                # abi shadow
+                # at lease 4
+                abi_storage_args_count = args_count
+                if abi_storage_args_count < 4:
+                    abi_storage_args_count = 4
+
+                # alignment
+                # 1 for {TEMP_REG_5}
+                align = ((1 + abi_storage_args_count) * 8 + self.compiler.get_function_stack_offset()) % 16
+                if align not in [0, 8]:
+                    self.raise_compiler_error(f'check alignment before call align = {align} not in [0, 8]')
+
+                if align != 0:
+                    self.stack_alloc(8, 'padding for function call')
+
+                self.push_reg(TEMP_REG_5)
+                self.write_asm(f'    mov {TEMP_REG_5}, {args_count}; {args_count = }\n')
+
+                # space for args
+                last_offset = self.stack_alloc(8 * abi_storage_args_count, 'alloc function call args')
+                self.write_asm(f'    ; last_offset = {last_offset}\n')
+
+                # gen_asm for each arg
+                for ae in item[1]:
+                    # self.print_red(f'arg = {ae}')
+                    ae.print_me(0)
+                    ae_data = ae.gen_asm(last_offset, fetch_lv_address_value = True)
+
+                    last_offset -= 8
+
+                # microsoft abi
+                # rcx rdx r8 r9 stack...
+
+                last_offset = self.compiler.get_function_stack_offset()
+                for i in range(0, min(4, args_count)):
+                    if i == 0:
+                        self.write_asm(f'    mov rcx, [rbp - {last_offset}] ; arg {i}\n')
+                    elif i == 1:
+                        self.write_asm(f'    mov rdx, [rbp - {last_offset}] ; arg {i}\n')
+                    elif i == 2:
+                        self.write_asm(f'    mov r8, [rbp - {last_offset}] ; arg {i}\n')
+                    elif i == 3:
+                        self.write_asm(f'    mov r9, [rbp - {last_offset}] ; arg {i}\n')
+                    last_offset -= 8
+
+                self.write_asm(f'\n    call {self.primary.idf.name} ; {len(item[1])} args. offset = {self.compiler.get_function_stack_offset()}\n')
+                self.write_asm(f'    ; call return. offset = {self.compiler.get_function_stack_offset()}\n')
+
+                if set_result:
+                    self.write_asm(f'    mov [rbp - {result_offset}], rax ; save call result\n')
+
+                # clean
+                self.stack_free(8 * abi_storage_args_count, 'free function call args')
+                self.pop_reg(TEMP_REG_5)
+
+                if align != 0:
+                    self.stack_free(8, 'clean padding for function call')
+
+                self.write_asm(f'\n    ; function call over [{self.primary.idf.name}]\n\n')
+
+                current_obj['type'] = 'mem'
+                current_obj['offset'] = result_offset
+
+            else:
+                self.raise_compiler_error(f'unknown postfix data {item}')
+
+        if set_result:
+            pass
+
+        if 'fetch_lv_address_value' in kwargs:
+            if 'lv_address' in current_obj:
+                self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {result_offset}] ; get address\n')
+                self.write_asm(f'    mov {TEMP_REG_4}, [{TEMP_REG_4}] ; fetch_lv_address_value\n')
+                self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; save value\n')
+
+        return current_obj
+
+        #elif self.primary.const:
+        #    if self.data_count > 0:
+        #        self.raise_code_error(f'postfix on const')
+
+        #    return self.primary.gen_asm(result_offset, set_result, need_global_const = need_global_const)
+
+        #elif self.primary.string:
+        #    # "13ef"[0]; legal but ...
+
+        #    if need_global_const:
+        #        self.raise_code_error(f'need_global_const')
+
+        #    if self.data_count > 0:
+        #        self.raise_code_error(f'postfix on string')
+
+        #    return self.primary.gen_asm(result_offset, set_result)
+        #else:
+        #    return self.primary.gen_asm(result_offset, set_result)
 
 
 class UnaryExpression(CComponent):
@@ -1052,7 +1087,9 @@ class UnaryExpression(CComponent):
         self.write_asm(f'    ; UnaryExpression gen_asm {self.uo}\n')
 
         if self.pe:
-            return self.pe.gen_asm(result_offset, need_global_const = need_global_const, **kwargs)
+            data = self.pe.gen_asm(result_offset, need_global_const = need_global_const, **kwargs)
+            self.print_red(data)
+            return data
         elif self.pp:
             if need_global_const:
                 self.raise_code_error(f'{self.pp} need_global_const')
@@ -1060,23 +1097,39 @@ class UnaryExpression(CComponent):
             data = self.ue.gen_asm(result_offset)
 
             if 'lv' not in data:
+                self.print_red(data)
                 self.raise_code_error(f'prefix {self.pp} needs lvalue')
 
             if 'pointer_data' in data or 'array_data' in data:
                 self.raise_code_error(f'no support yet')
 
-            if self.pp == '++':
-                self.write_asm(f'    inc qword ptr [rbp - {data["offset"]}] ; ++\n')
+            if 'lv_address' in data:
+                self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {result_offset}] ; get lv_address\n')
+
+                # update lvalue
+                if self.pp == '++':
+                    self.write_asm(f'    inc qword ptr [{TEMP_REG_4}] ; ++{data["name"]}\n')
+                else:
+                    self.write_asm(f'    dec qword ptr [{TEMP_REG_4}] ; --{data["name"]}\n')
+
+                if set_result:
+                    if 'fetch_lv_address_value' in kwargs:
+                        self.write_asm(f'    mov {TEMP_REG_4}, [{TEMP_REG_4}]\n')
+
+                    self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4}\n')
             else:
-                self.write_asm(f'    dec qword ptr [rbp - {data["offset"]}] ; --\n')
+                if self.pp == '++':
+                    self.write_asm(f'    inc qword ptr [rbp - {data["offset"]}] ; ++{data["name"]}\n')
+                else:
+                    self.write_asm(f'    dec qword ptr [rbp - {data["offset"]}] ; --{data["name"]}\n')
 
-            if set_result:
-                self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {data["offset"]}]\n')
+                if set_result:
+                    self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {data["offset"]}]\n')
+                    self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4}\n')
 
-                if 'lv_address' in data and 'fetch_lv_address_value' in kwargs:
-                    self.write_asm(f'    mov {TEMP_REG_4}, [{TEMP_REG_4}]\n')
-
-                self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4}\n')
+            data['offset'] = result_offset
+            data.pop('lv')
+            data.pop('lv_address', None)
 
 
             return data
@@ -2093,10 +2146,14 @@ class JumpStatement(CComponent):
         elif self.cmd == 'return':
             if self.exp:
                 # set return value
-                offset = self.stack_alloc(8, 'JumpStatement for exp result')
-                data = self.exp.gen_asm(offset) # todo: add result_reg?
+                result_offset = self.stack_alloc(8, 'JumpStatement for exp result')
+                data = self.exp.gen_asm(result_offset) # todo: add result_reg?
 
-                self.write_asm(f'    mov rax, [rbp - {offset}] ; set return value\n')
+                if 'lv_address' in data:
+                    self.write_asm(f'    mov {TEMP_REG_4}, [rbp - {result_offset}] ; get lv_address\n')
+                    self.write_asm(f'    mov rax, [{TEMP_REG_4}] ; set return value\n')
+                else:
+                    self.write_asm(f'    mov rax, [rbp - {result_offset}] ; set return value\n')
 
                 self.stack_free(8, 'JumpStatement for exp result')
             else:
@@ -2292,10 +2349,27 @@ class Declaration(CComponent):
 
                             self.write_asm_data(f'{name} byte {data_size * array_size} dup (0) ; {data_type} array. {data_size} * {array_size}\n')
                             continue
-                        elif 'function_data' in dtr:
-                            # elif tp == 'function':
+                        elif 'function_data' in dtr: # function declaration
                             self.write_asm_data(f'extern {name}:proc\n')
-                            self.add_to_scope({'name':name, 'function_data':dtr['function_data']})
+
+                            # ([], {'name': 'print', 'function_data': ([((TypeSpecifier char, []), ([[]], {'name': 's'}))], None)})
+                            self.print_red(f'{item = }')
+
+                            args_data = []
+                            if len(dtr['function_data']) > 0:
+                                for arg in dtr['function_data'][0]:
+                                    arg_info = {'data_type':arg[0][0].type_data, 'name':arg[1][1]['name']}
+                                    if len(arg[1][0]) > 0:
+                                        arg_info['pointer_data'] = arg[1][0]
+
+                                    args_data.append(arg_info)
+
+                                if dtr['function_data'][1] == '...':
+                                    args_data.append('...')
+
+                            function_data = {'data_type':self.dss[0].type_data, 'args':args_data}
+                            self.add_to_scope({'name':name, 'function_data':function_data})
+
                             continue
                         else:
                             self.raise_code_error(f'Declaration unknown type {item.dtr}')
@@ -2439,14 +2513,71 @@ class FunctionDefinition(CComponent):
             else:
                 self.print(f'{" " * (indent + 8)}{ds}')
 
-        self.print(f'{" " * (indent + PRINT_INDENT)}{self.declarator}')
+        self.print(f'{" " * (indent + PRINT_INDENT)}declarator = {self.declarator}')
         # self.print(f'{" " * (indent + PRINT_INDENT)}{self.dl}')
         self.cs.print_me(indent + PRINT_INDENT)
 
     @CComponent.gen_asm_helper
     def gen_asm(self, global_scope = False):
-        # for ds in self.dss:
-        #     ds.gen_asm(f)
+        '''
+        int f(int g, int * wtf, const int yyy)
+
+        dss =
+          TypeSpecifier
+            int
+          []
+
+        declarator = ([],
+            {'name': 'f',
+                'function_data': (
+                [
+                    (
+                        (TypeSpecifier int, []),
+                        ([], {'name': 'g'})
+                    ),
+                    (
+                        (TypeSpecifier int, []),
+                        ([[]], {'name': 'wtf'})
+                    ),
+                    (
+                        (TypeSpecifier int, [('tq', 'const')]),
+                        ([], {'name': 'yyy'})
+                    )
+                ],
+                None) # for ...
+            }
+        )
+        '''
+
+        self.print_red(f'self.declarator = {pprint.pformat(self.declarator)}')
+
+        # stack after call
+
+        #  n * 8 + 8     arg n 8bytes
+        #                ...
+        #  24            arg 2 8bytes
+        #  16            arg 1 8bytes
+        #  8             return address
+        #  0             old rbp           <- rsp = rbp
+
+        # make function_data
+        offset = -16 # - is up
+        args_data = []
+        if len(self.declarator[1]['function_data']) > 0:
+            for arg in self.declarator[1]['function_data'][0]:
+                arg_info = {'lv':1, 'offset':offset, 'data_type':arg[0][0].type_data, 'name':arg[1][1]['name']}
+                if len(arg[1][0]) > 0:
+                    arg_info['pointer_data'] = arg[1][0]
+
+                args_data.append(arg_info)
+                offset -= 8
+
+            if self.declarator[1]['function_data'][1] == '...':
+                args_data.append('...')
+
+        function_data = {'data_type':self.dss[0].type_data, 'args':args_data}
+
+        self.print_red(function_data)
 
         # enter function
         self.compiler.current_function = self
@@ -2455,8 +2586,11 @@ class FunctionDefinition(CComponent):
         self.enter_scope()
 
         # add self tp scope(can call self)
-        scope_item = {'name':self.name, 'function_data':{}}
-        self.add_to_scope(scope_item)
+        scope_item = {'name':self.name, 'function_data':function_data}
+
+        self.add_to_scope(copy.deepcopy(scope_item))
+        for arg in args_data:
+            self.add_to_scope(copy.deepcopy(arg), add_to_variable_stack_size = False)
 
         self.write_asm(f'{self.name} proc ; FunctionDefinition\n')
 
@@ -2477,14 +2611,14 @@ class FunctionDefinition(CComponent):
         self.cs.gen_asm()
 
         # force return
-        self.write_asm(f'\n    leave ; force return\n    ret ; force return\n')
+        self.write_asm(f'\n    leave ; force return\n    ret 0; force return\n')
 
         self.write_asm(f'{self.name} endp\n\n')
 
         self.leave_scope(free_stack_variables = False) # function will free stack automatically
 
         # add to scope
-        self.add_to_scope(scope_item)
+        self.add_to_scope(copy.deepcopy(scope_item))
 
 
 class TranslationUnit(CComponent):

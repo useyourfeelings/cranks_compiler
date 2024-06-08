@@ -2,7 +2,7 @@ f2 xc printf 666
 f2 xc printf 666
 f2 result = 666
 v1 = -1665552224, v2 = 3
-f3 printf 1 wtf 2 33 0 35
+f3 printf 1 wtf 2 32 0 34
 f1 printf -1665555554
 f1 result = -1665555554
 f2 xc printf 666

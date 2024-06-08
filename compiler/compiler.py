@@ -37,6 +37,7 @@ class Compiler:
         self.depth = 0
         self.print_depth = False
         self.print_on = True
+        self.silent_test = True
         self.saved_index = None
         self.source_file_index = None
         self.source_file_buffer = None
@@ -173,7 +174,7 @@ class Compiler:
             c = self.source_file_buffer[self.source_file_index]
             if c == '\n':
                 self.current_lineno += 1
-                self.dbg(f'{self.current_lineno = }')
+                # self.dbg(f'{self.current_lineno = }')
 
             self.dbg(f'getc return {c = }')
             return c
@@ -793,7 +794,7 @@ class Compiler:
     # offset - stack offset - 32
     # array_data - array data - {'dim':2, 'ranks':[2, 100]}
     # pointer_data - pointer data - [[], [const], []] for **const*
-    # function_data
+    # function_data - args, ...
     # global - is global?
     # const - is const?
     # size - obj size
@@ -805,7 +806,7 @@ class Compiler:
         # ( declarator )
         # direct-declarator [ constant-expression? ] # array decl
         # direct-declarator ( parameter-type-list ) # function
-        # direct-declarator ( identifier-list? ) # function
+        # direct-declarator ( identifier-list? ) # function # old style. but need this to match f()
 
         self.dbg(f'get_direct_declarator')
 
@@ -858,6 +859,10 @@ class Compiler:
 
             if self.get_a_string('('):
                 idfs = self.get_identifier_list()
+
+                if len(idfs) != 0: # old style
+                    self.raise_code_error(f'old style paramsters not supported')
+
                 if self.get_a_string(')'):
                     obj_data['function_data'] = idfs
                     break
@@ -3185,11 +3190,15 @@ class Compiler:
             test_info = json.load(test_json)
             print(test_info)
 
+            if test_info['test_on'] == 0:
+                return
+
             test_start = test_info['test_start']
             test_end = test_info['test_end']
+            silent_test = test_info['silent_test']
 
             for i in range(test_start, test_end + 1):
-                ok, output = self.compile_and_run(f'test_{i}.c', silent = True)
+                ok, output = self.compile_and_run(f'test_{i}.c', silent = silent_test)
                 if not ok:
                     if isinstance(output, CompilerError):
                         raise CompilerError(f'test_{i}.c failed. lineno = {self.current_lineno}')

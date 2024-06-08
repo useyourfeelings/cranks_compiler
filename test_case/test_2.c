@@ -19,7 +19,7 @@ printf("xc printf %d wtf2\n", aa);
     for(; i > 3; ){
     i--;
     i--;
-        printf("xc printf  wtf1 %d\n", ------i);
+        printf("xc printf  wtf1 %d\n", --i);
         printf("xc printf  wtf2 %d\n", i++);
         printf("xc printf  wtf3 %d\n", --i);
     }
