@@ -187,6 +187,29 @@ class TypeSpecifier(CComponent):
             self.print(f'{" " * (indent + PRINT_INDENT)}{self.type_data}')
 
 
+class Typedef(CComponent):
+    def __init__(self, compiler, dss, dtr):
+        super().__init__(compiler)
+        self.dss = dss
+        self.dtr = dtr
+        self.name = dtr[1]['name']
+
+    def __repr__(self):
+        return f'{self.__class__.__name__} {self.name} {self.dss} {self.dtr}'
+
+    def print_me(self, indent = 0):
+        self.print(f'{" " * indent}{self.__class__.__name__}')
+        self.print(f'{" " * (indent + PRINT_INDENT)}name = {self.name}')
+
+        self.print(f'{" " * (indent + PRINT_INDENT)}dss =')
+
+        for k in self.dss:
+            self.print(f'{" " * (indent + PRINT_INDENT * 2)}{k} = {self.dss[k]}')
+
+        self.print(f'{" " * (indent + PRINT_INDENT)}dtr =')
+        self.print(f'{" " * (indent + PRINT_INDENT * 2)}{self.dtr}')
+
+
 class StructUnion(CComponent):
     # struct-or-union identifier? { struct-declaration-list }
     # struct-or-union identifier
@@ -201,7 +224,7 @@ class StructUnion(CComponent):
 
     def __init__(self, compiler, tp, name, decls):
         super().__init__(compiler)
-        self.tp = tp  # struct or union
+        self.tp = tp  # 'struct' or 'union'
         self.name = name
         self.decls = decls
 
@@ -209,7 +232,7 @@ class StructUnion(CComponent):
         self.members = {}
 
     def __repr__(self):
-        return f'StructUnion {self.name} {self.decls} size = {self.size}'
+        return f'{self.__class__.__name__} {self.name} {self.decls} size = {self.size}'
 
     def print_me(self, indent = 0):
         self.print(f'{" " * indent}{self.tp}')
@@ -266,7 +289,7 @@ class StructUnion(CComponent):
                                 self.raise_code_error(f'no support for type [{item.type_data}]')
 
                     for item in decl[1]:
-                        self.print_red(item) # (([], {'type': 'var', 'name': 'a'}), None)
+                        self.print_red(item)
 
                         array_size = 1
                         ranks = []
@@ -1021,25 +1044,6 @@ class PostfixExpression(CComponent):
                 self.write_asm(f'    mov [rbp - {result_offset}], {TEMP_REG_4} ; save value\n')
 
         return current_obj
-
-        #elif self.primary.const:
-        #    if self.data_count > 0:
-        #        self.raise_code_error(f'postfix on const')
-
-        #    return self.primary.gen_asm(result_offset, set_result, need_global_const = need_global_const)
-
-        #elif self.primary.string:
-        #    # "13ef"[0]; legal but ...
-
-        #    if need_global_const:
-        #        self.raise_code_error(f'need_global_const')
-
-        #    if self.data_count > 0:
-        #        self.raise_code_error(f'postfix on string')
-
-        #    return self.primary.gen_asm(result_offset, set_result)
-        #else:
-        #    return self.primary.gen_asm(result_offset, set_result)
 
 
 class UnaryExpression(CComponent):
@@ -2242,7 +2246,7 @@ class Declaration(CComponent):
     # struct S3              s1, s2                ;
     # struct {int a, b;}     s1, s2                ;
 
-    def __init__(self, compiler, dss, idl: InitDeclarator, global_scope = False):
+    def __init__(self, compiler, dss, idl: list[InitDeclarator], global_scope = False):
         super().__init__(compiler)
         self.dss = dss
         self.idl = idl
@@ -2257,11 +2261,8 @@ class Declaration(CComponent):
     def print_me(self, indent = 0):
         self.print(f'{" " * indent}Declaration')
         self.print(f'{" " * (indent + PRINT_INDENT)}dss')
-        for ds in self.dss:
-            if hasattr(ds, 'print_me'):
-                ds.print_me(indent + 8)
-            else:
-                self.print(f'{" " * (indent + 8)}{ds}')
+        for k in self.dss:
+            self.print(f'{" " * (indent + 8)}{k} = {self.dss[k]}')
         self.print(f'{" " * (indent + PRINT_INDENT)}idl')
         if self.idl:
             for idtr in self.idl:
@@ -2271,180 +2272,217 @@ class Declaration(CComponent):
 
     @CComponent.gen_asm_helper
     def gen_asm(self, global_scope = False):
-        data_type = self.dss[0].type_data
+        # if typedef
+        if self.dss['storage_class_specifier'] == 'typedef':
+            for idtr in self.idl:
+                if idtr.init:
+                    self.raise_code_error(f'can not do init on typedef')
+
+                '''
+                Declaration
+                    dss
+                        storage_class_specifier = Identifier(typedef)
+                        type_specifier = TypeSpecifier [int float ... or StructUnion or Typedef]
+                        type_qualifier = set()
+                        function_spec = None
+                        alignment_spec = None
+                    idl
+                        InitDeclarator
+                          dtr = [[], {'name': 'WTF'}]
+                          NoObject
+                        InitDeclarator
+                          dtr = [[], {'name': 'WTFFffff'}]
+                          NoObject
+                '''
+
+                dss = copy.deepcopy(self.dss)
+                dtr = copy.deepcopy(idtr.dtr)
+
+                self.print_me()
+
+                if isinstance(dss['type_specifier'].type_data, Typedef):
+                    # if Typedef of Typedef. merge
+                    dss['type_specifier'].type_data.print_me()
+                    type_name = dss['type_specifier'].type_data.name
+
+                    scope_item = self.get_scope_item(type_name)
+
+                    if scope_item is None:
+                        self.raise_code_error(f'[{type_name}] unknown')
+
+                    if 'typedef' not in scope_item:
+                        self.raise_code_error(f'[{type_name}] unknown')
+
+                    self.print_red(scope_item)
+                    scope_item['data'].print_me()
+
+                    new_scope_item = copy.deepcopy(scope_item)
+
+                    # merge
+                    new_scope_item['data'].dss['type_qualifier'].update(dss['type_qualifier'])
+                    if len(dtr[0]) > 0: # pointer
+                        new_scope_item['data'].dtr[0] = dtr[0] + new_scope_item['data'].dtr[0]
+
+                    new_scope_item['name'] = idtr.dtr[1]['name']
+                else:
+                    # just save this typedef info to scope
+                    new_scope_item = {'name':idtr.dtr[1]['name'],
+                                  'typedef':1,
+                                  'data':Typedef(self.compiler, dss, dtr)}
+
+                self.add_to_scope(new_scope_item)
+
+            return
+
+        data_size = 8  # 8 bytes for all normal types for now
+        data_type = self.dss['type_specifier'].type_data
+
+        # if Typedef, merge Typedef to current. like expand the Typedef data.
+        if isinstance(data_type, Typedef):
+            self.print_red(data_type)
+            data_type.print_me()
+            self.print_me()
+
+            scope_typedef = self.get_scope_item(data_type.name)
+            if scope_typedef is None:
+                self.raise_code_error(f'[{data_type.name}] not defined')
+
+            if 'typedef' not in scope_typedef:
+                self.raise_code_error(f'[{data_type.name}] not defined')
+
+            typedef = scope_typedef['data']
+
+            self.print_red(f'{typedef = }')
+
+            self.dss['type_qualifier'].update(typedef.dss['type_qualifier'])
+            self.dss['type_specifier'] = typedef.dss['type_specifier']
+
+            # merge pointer
+            if len(typedef.dtr[0]) > 0:
+                for idtr in self.idl:
+                    idtr.dtr[0] += typedef.dtr[0]
+
+            data_type = self.dss['type_specifier'].type_data
 
         if isinstance(data_type, StructUnion):
+            self.print_red(data_type)
             data_type.gen_struct_data()
+            data_size = data_type.size
+            data_type = data_type.name
 
+        #
         # todo: make new name
-        # todo: global init/assignment/array
-        if global_scope:
-            #if not self.idl: # must struct for me
 
-            # 8 bytes for all normal types for now
-            data_size = 8
-            if isinstance(data_type, StructUnion):
-                self.print_red(data_type)
-                data_size = data_type.size
-                data_type = data_type.name
+        if self.idl:
+            for item in self.idl:
+                self.print_red(f'item = {item}')
+                self.print_red(item.dtr[1])
 
-            if self.idl:
-                for item in self.idl:
-                    if not item.dtr[0]:
-                        self.print_red(f'item = {item}')
-                        self.print_red(item.dtr[1])
+                dtr = item.dtr[1]
+                name = dtr['name']
 
-                        dtr = item.dtr[1]
-                        name = dtr['name']
+                if 'array_data' not in dtr and 'function_data' not in dtr:
+                    scope_item = {'lv':1, 'name':name, 'data_type':data_type}
 
-                        if 'array_data' not in dtr and 'function_data' not in dtr:
-                            is_const = False
-                            for dss_item in self.dss[1]: # check const
-                                if dss_item[0] == 'tq' and dss_item[1] == 'const':
-                                    is_const = True
+                    # if const
+                    if 'const' in self.dss['type_qualifier']:
+                        scope_item['const'] = 1
 
-                            scope_item = {'lv':1, 'name':name, 'data_type':data_type, 'global':1}
-                            if is_const:
-                                scope_item['const'] = 1
+                    # if pointer
+                    # * = [[]]
+                    # * *const * = [[], ['const'], []]
+                    if len(item.dtr[0]) > 0:
+                        data_size = 8
+                        scope_item['pointer_data'] = item.dtr[0]
 
-                            # todo: pointer
+                    scope_item['size'] = data_size
 
-                            if isinstance(item.init, AssignmentExpression):
-                                init_data = item.init.gen_asm(None, need_global_const = True)
-                                self.print_red(init_data)
-                                if 'value' in init_data:
-                                    scope_item['value'] = init_data['value']
-
-                            self.add_to_scope(scope_item)
-
-                            if data_type in ['int']:
-                                value = 0
-                                if 'value' in scope_item:
-                                    value = scope_item["value"]
-                                self.write_asm_data(f'{name} qword {value}\n')
-                            else:
-                                # struct
-                                self.write_asm_data(f'{name} byte {data_size} dup (0)\n')
-
-                            continue
-                        elif 'array_data' in dtr:
-                            # a byte 10000 dup (0)
-
-                            self.write_asm(f'    ; Declaration array {data_type} {name}\n')
-
-                            array_size = 1
-                            ranks = []
-                            dim = dtr['array_data']['dim']
-
-                            for rank_exp in dtr['array_data']['ranks']:
-                                result = rank_exp.gen_asm(None, set_result = False, need_global_const = True)
-                                if 'value' not in result:
-                                    self.raise_code_error(f'array rank must be const')
-
-                                array_size *= result['value']
-                                ranks.append(result['value'])
-
-                            scope_item = {'data_type':data_type, 'size':data_size * array_size, 'name':name, 'global':1, 'array_data':{'dim':dim, 'ranks':ranks}}
-                            self.add_to_scope(scope_item)
-
-                            self.write_asm_data(f'{name} byte {data_size * array_size} dup (0) ; {data_type} array. {data_size} * {array_size}\n')
-                            continue
-                        elif 'function_data' in dtr: # function declaration
-                            self.write_asm_data(f'extern {name}:proc\n')
-
-                            # ([], {'name': 'print', 'function_data': ([((TypeSpecifier char, []), ([[]], {'name': 's'}))], None)})
-                            self.print_red(f'{item = }')
-
-                            args_data = []
-                            if len(dtr['function_data']) > 0:
-                                for arg in dtr['function_data'][0]:
-                                    arg_info = {'data_type':arg[0][0].type_data, 'name':arg[1][1]['name']}
-                                    if len(arg[1][0]) > 0:
-                                        arg_info['pointer_data'] = arg[1][0]
-
-                                    args_data.append(arg_info)
-
-                                if dtr['function_data'][1] == '...':
-                                    args_data.append('...')
-
-                            function_data = {'data_type':self.dss[0].type_data, 'args':args_data}
-                            self.add_to_scope({'name':name, 'function_data':function_data})
-
-                            continue
-                        else:
-                            self.raise_code_error(f'Declaration unknown type {item.dtr}')
-
-                    self.write_asm_data(f'    ; Declaration\n')
-            else:
-                self.raise_code_error(f'need variable')
-        else:
-            if data_type in ['int'] or isinstance(data_type, StructUnion):
-
-                # 8 bytes for all normal types for now
-                data_size = 8
-                if isinstance(data_type, StructUnion):
-                    self.print_red(data_type)
-                    data_size = data_type.size
-                    data_type = data_type.name
-
-                for item in self.idl:
-                    dtr = item.dtr[1]
-                    name = dtr['name']
-
-                    if 'array_data' not in dtr and 'function_data' not in dtr:
-                        is_const = False
-                        for dss_item in self.dss[1]:  # check const
-                            if dss_item[0] == 'tq' and dss_item[1] == 'const':
-                                is_const = True
-
+                    if global_scope:
+                        scope_item['global'] = 1
+                    else:
                         # alloc for variable
                         offset = self.compiler.add_function_stack_offset(data_size)
                         self.write_asm(f'    sub rsp, {data_size} ; Declaration var {data_type} {name} offset = {offset}\n')
+                        scope_item['offset'] = offset
 
-                        scope_item = {'lv':1, 'data_type':data_type, 'name':name, 'offset':offset, 'size':data_size}
-                        if is_const:
-                            scope_item['const'] = 1
+                    if global_scope:
+                        if isinstance(item.init, AssignmentExpression):
+                            # todo: global function pointer ...
+                            init_data = item.init.gen_asm(None, need_global_const = True)
+                            self.print_red(init_data)
+                            if 'value' in init_data:
+                                scope_item['value'] = init_data['value']
 
-                        if item.dtr[0]:  # pointer
-                            if len(item.dtr[0]) > 0:
-                                scope_item['pointer_data'] = item.dtr[0]
-                            # * = [[]]
-                            # * *const * = [[], ['const'], []]
+                        self.add_to_scope(scope_item)
 
+                        if data_type in ['int']:
+                            value = 0
+                            if 'value' in scope_item:
+                                value = scope_item["value"]
+                            self.write_asm_data(f'{name} qword {value}\n')
+                        else:
+                            # struct
+                            self.write_asm_data(f'{name} byte {data_size} dup (0)\n')
+                    else:
                         self.add_to_scope(scope_item)
 
                         if isinstance(item.init, AssignmentExpression):
                             item.init.gen_asm(scope_item['offset'])
-                    elif 'array_data' in dtr:
-                        self.write_asm(f'    ; Declaration array {data_type} {name}\n')
+                elif 'array_data' in dtr:
+                    self.write_asm(f'    ; Declaration array {data_type} {name}\n')
 
-                        array_size = 1
-                        ranks = []
-                        dim = dtr['array_data']['dim']
+                    array_size = 1
+                    ranks = []
+                    dim = dtr['array_data']['dim']
 
-                        for rank_exp in dtr['array_data']['ranks']:
-                            result_offset = self.stack_alloc(8, f'Declaration array {data_type} {name} for exp')
+                    for rank_exp in dtr['array_data']['ranks']:
+                        # result_offset = self.stack_alloc(8, f'Declaration array {data_type} {name} for exp')
 
-                            result = rank_exp.gen_asm(result_offset, set_result = False)
+                        result = rank_exp.gen_asm(None, set_result = False, need_global_const = True)
 
-                            self.stack_free(8, f'Declaration array {data_type} {name} for exp')
+                        # self.stack_free(8, f'Declaration array {data_type} {name} for exp')
 
-                            if 'value' not in result:
-                                self.raise_code_error(f'array rank must be const')
+                        if 'value' not in result:
+                            self.raise_code_error(f'array rank must be const')
 
-                            array_size *= result['value']
-                            ranks.append(result['value'])
+                        array_size *= result['value']
+                        ranks.append(result['value'])
 
-                        # alloc for array
+                    if global_scope:
+                        scope_item = {'data_type':data_type, 'size':data_size * array_size, 'name':name, 'global':1, 'array_data':{'dim':dim, 'ranks':ranks}}
+                        self.add_to_scope(scope_item)
+
+                        # a byte 10000 dup (0)
+                        self.write_asm_data(f'{name} byte {data_size * array_size} dup (0) ; global {data_type} array. {data_size} * {array_size}\n')
+                    else:
+                        # array on stack
                         offset = self.compiler.add_function_stack_offset(data_size * array_size)
-                        self.write_asm(f'    sub rsp, {data_size * array_size} ; Declaration array {data_type} {name} offset = {offset}\n')
+                        self.write_asm(f'    sub rsp, {data_size * array_size} ; Declaration local array {data_type} {name} offset = {offset}\n')
 
                         scope_item = {'data_type':data_type, 'size':data_size * array_size, 'name':name, 'offset':offset, 'array_data':{'dim':dim, 'ranks':ranks}}
                         self.add_to_scope(scope_item)
-                    else:
-                        self.raise_compiler_error(f'wtf 1')
-            else:
-                self.raise_compiler_error(f'no support for [{data_type}]')
+                elif 'function_data' in dtr:  # function declaration
+                    self.write_asm_data(f'extern {name}:proc\n')
+
+                    # ([], {'name': 'print', 'function_data': ([((TypeSpecifier char, []), ([[]], {'name': 's'}))], None)})
+                    self.print_red(f'{item = }')
+
+                    args_data = []
+                    if len(dtr['function_data']) > 0:
+                        for arg in dtr['function_data'][0]:
+                            arg_info = {'data_type':arg[0]['type_specifier'].type_data, 'name':arg[1][1]['name']}
+                            if len(arg[1][0]) > 0:
+                                arg_info['pointer_data'] = arg[1][0]
+
+                            args_data.append(arg_info)
+
+                        if dtr['function_data'][1] == '...':
+                            args_data.append('...')
+
+                    function_data = {'data_type':self.dss['type_specifier'].type_data, 'args':args_data}
+                    self.add_to_scope({'name':name, 'function_data':function_data})
+
+        return
 
 
 class CompoundStatement(CComponent):
@@ -2507,11 +2545,8 @@ class FunctionDefinition(CComponent):
     def print_me(self, indent):
         self.print(f'{" " * indent}FunctionDefinition')
         self.print(f'{" " * (indent + PRINT_INDENT)}dss')
-        for ds in self.dss:
-            if hasattr(ds, 'print_me'):
-                ds.print_me(indent + 8)
-            else:
-                self.print(f'{" " * (indent + 8)}{ds}')
+        for k in self.dss:
+            self.print(f'{" " * (indent + 8)}{k} = {self.dss[k]}')
 
         self.print(f'{" " * (indent + PRINT_INDENT)}declarator = {self.declarator}')
         # self.print(f'{" " * (indent + PRINT_INDENT)}{self.dl}')
@@ -2565,7 +2600,7 @@ class FunctionDefinition(CComponent):
         args_data = []
         if len(self.declarator[1]['function_data']) > 0:
             for arg in self.declarator[1]['function_data'][0]:
-                arg_info = {'lv':1, 'offset':offset, 'data_type':arg[0][0].type_data, 'name':arg[1][1]['name']}
+                arg_info = {'lv':1, 'offset':offset, 'data_type':arg[0]['type_specifier'].type_data, 'name':arg[1][1]['name']}
                 if len(arg[1][0]) > 0:
                     arg_info['pointer_data'] = arg[1][0]
 
@@ -2575,7 +2610,7 @@ class FunctionDefinition(CComponent):
             if self.declarator[1]['function_data'][1] == '...':
                 args_data.append('...')
 
-        function_data = {'data_type':self.dss[0].type_data, 'args':args_data}
+        function_data = {'data_type':self.dss['type_specifier'].type_data, 'args':args_data}
 
         self.print_red(function_data)
 

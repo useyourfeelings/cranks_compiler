@@ -8,5 +8,8 @@ int wtf1;
 int main(){
 
 
+    printf("ok\n");
+
+
     return 0;
 }
