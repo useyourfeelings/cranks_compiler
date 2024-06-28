@@ -47,6 +47,7 @@ class Compiler:
                          'register', 'typedef', 'char', 'extern', 'return', 'union', 'const', 'float', 'short',
                          'unsigned', 'continue', 'for', 'signed', 'void', 'default', 'goto', 'sizeof', 'volatile', 'do',
                          'if', 'static', 'while'}
+        self.hex_digits = '0123456789abcdefABCDEF'
 
         # self.out_f = open('./output/cranks_compiler.log', 'w', encoding = 'utf8')
         self.asm_head = io.StringIO()
@@ -2392,6 +2393,12 @@ class Compiler:
         self.dbg(f'')
         save_1 = self.save()
 
+        if False: # floating point is complicated. ignore for now.
+            fc = self.get_floating_constant()
+            if fc:
+                self.dbg(f'get_floating_constant {fc}')
+                return fc
+
         ic = self.get_integer_constant()
         if ic:
             self.dbg(f'get_integer_constant {ic}')
@@ -2521,6 +2528,235 @@ class Compiler:
                     # return int(string)
                     self.dbg(f'return {string}')
                     return string
+
+        self.load(save_1)
+        self.dbg(f'return comp.NoObject()')
+        return comp.NoObject()
+
+    @go_deep
+    def get_floating_constant(self):
+        # decimal-floating-constant
+        # hexadecimal-floating-constant
+
+        self.dbg(f'')
+        save_1 = self.save()
+
+        dfc = self.get_decimal_floating_constant()
+        if dfc:
+            self.dbg(f'{dfc}')
+            return comp.Constant(self, 'float', dfc)
+
+        if False: # todo
+            hfc = self.get_hexadecimal_loating_constant()
+            if hfc:
+                self.dbg(f'{hfc}')
+                return comp.Constant(self, 'int', int(hc, 16))
+
+            self.load(save_1)
+            self.dbg(f'return comp.NoObject()')
+            return comp.NoObject()
+
+        self.load(save_1)
+        self.dbg(f'return comp.NoObject()')
+        return comp.NoObject()
+
+    @go_deep
+    def get_decimal_floating_constant(self):
+        # fractional-constant exponent-part? floating-suffix? # 123.456e-3L
+        # digit-sequence exponent-part floating-suffix?       # 123456e6f but 123456L is legal in gcc?
+
+        self.dbg(f'')
+        save_1 = self.save()
+
+        self.skip_white()
+
+        fc = self.get_fractional_constant()
+        if fc:
+            ep = self.get_exponent_part()
+
+            save_2 = self.save()
+            floating_suffix = self.getc()
+            if floating_suffix not in 'flFL':
+                self.load(save_2)
+                floating_suffix = comp.NoObject()
+
+            return True, fc, ep, floating_suffix # True = is fractional
+
+        ds = self.get_digit_sequence()
+        if ds:
+            ep = self.get_exponent_part()
+            if ep:
+                save_2 = self.save()
+                floating_suffix = self.getc()
+                if floating_suffix not in 'flFL':
+                    self.load(save_2)
+                    floating_suffix = comp.NoObject()
+                return False, ds, ep, floating_suffix
+
+        self.load(save_1)
+        self.dbg(f'return comp.NoObject()')
+        return comp.NoObject()
+
+    @go_deep
+    def get_fractional_constant(self):
+        # digit-sequence? . digit-sequence
+        # digit-sequence .
+
+        self.dbg(f'')
+        save_1 = self.save()
+
+        ds_1 = self.get_digit_sequence()
+
+        dot = self.get_a_string('.', skip_white = False)
+        if dot:
+            ds_2 = self.get_digit_sequence()
+            if ds_1 or ds_2:
+                self.dbg(f'return {(ds_1, ds_2)}')
+                return ds_1, ds_2
+
+        self.load(save_1)
+        self.dbg(f'return comp.NoObject()')
+        return comp.NoObject()
+
+    @go_deep
+    def get_digit_sequence(self):
+        # digit
+        # digit-sequence digit
+
+        self.dbg(f'')
+        save_1 = self.save()
+
+        digit = self.get_digit()
+        if digit:
+            digits = digit
+
+            while True:
+                digit = self.get_digit()
+                if digit:
+                    digits += digit
+                else:
+                    self.dbg(f'return {digits}')
+                    return digits
+
+        self.load(save_1)
+        self.dbg(f'return comp.NoObject()')
+        return comp.NoObject()
+
+    @go_deep
+    def get_exponent_part(self):
+        # e sign? digit-sequence
+        # E sign? digit-sequence
+
+        self.dbg(f'')
+        save_1 = self.save()
+
+        eE = self.get_a_string('e', skip_white = False)
+        if not eE:
+            e = self.get_a_string('E', skip_white = False)
+
+        if eE:
+            sign = self.get_a_string('+', skip_white = False)
+            if not sign:
+                sign = self.get_a_string('-', skip_white = False)
+
+            ds = self.get_digit_sequence()
+            if ds:
+                self.dbg(f'return {(sign, ds)}')
+                return sign, ds
+
+        self.load(save_1)
+        self.dbg(f'return comp.NoObject()')
+        return comp.NoObject()
+
+    @go_deep
+    def get_hexadecimal_floating_constant(self):
+        # hexadecimal-prefix hexadecimal-fractional-constant binary-exponent-part floating-suffix? # 0x123.456e-3L
+        # hexadecimal-prefix hexadecimal-digit-sequence binary-exponent-part floating-suffix?      # 0x123456e6f but 123456L is legal in gcc?
+
+        self.dbg(f'')
+        save_1 = self.save()
+
+        prefix = self.get_a_string('0x')
+        if not prefix:
+            prefix = self.get_a_string('0X')
+
+        if prefix:
+            hfc = self.get_hexadecimal_fractional_constant()
+
+
+        fc = self.get_fractional_constant()
+        if fc:
+            ep = self.get_exponent_part()
+
+            save_2 = self.save()
+            floating_suffix = self.getc()
+            if floating_suffix not in 'flFL':
+                self.load(save_2)
+                floating_suffix = comp.NoObject()
+
+            return True, fc, ep, floating_suffix  # True = is fractional
+
+        ds = self.get_digit_sequence()
+        if ds:
+            ep = self.get_exponent_part()
+            if ep:
+                save_2 = self.save()
+                floating_suffix = self.getc()
+                if floating_suffix not in 'flFL':
+                    self.load(save_2)
+                    floating_suffix = comp.NoObject()
+                return False, ds, ep, floating_suffix
+
+        self.load(save_1)
+        self.dbg(f'return comp.NoObject()')
+        return comp.NoObject()
+
+    @go_deep
+    def get_hexadecimal_fractional_constant(self):
+        # hexadecimal-digit-sequence? . hexadecimal-digit-sequence
+        # hexadecimal-digit-sequence .
+
+        self.dbg(f'')
+        save_1 = self.save()
+
+        ds_1 = self.get_hexadecimal_digit_sequence()
+
+        dot = self.get_a_string('.', skip_white = False)
+        if dot:
+            ds_2 = self.get_hexadecimal_digit_sequence()
+            if ds_1 or ds_2:
+                self.dbg(f'return {(ds_1, ds_2)}')
+                return ds_1, ds_2
+
+        self.load(save_1)
+        self.dbg(f'return comp.NoObject()')
+        return comp.NoObject()
+
+    @go_deep
+    def get_hexadecimal_digit_sequence(self):
+        # hexadecimal-digit
+        # hexadecimal-digit-sequence hexadecimal-digit
+
+        self.dbg(f'')
+        save_1 = self.save()
+
+        digit = self.getc()
+        if digit and digit in self.hex_digits:
+            digits = digit
+
+            while True:
+                digit = self.getc()
+                if digit:
+                    if digit in self.hex_digits:
+                        digits += digit
+                        # elif digit.isspace():
+                        #    return digits
+                    else:
+                        self.dbg(f'return {digits}')
+                        return digits
+                else:
+                    self.dbg(f'return {digits}')
+                    return digits
 
         self.load(save_1)
         self.dbg(f'return comp.NoObject()')
